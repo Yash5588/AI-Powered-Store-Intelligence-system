@@ -1,0 +1,43 @@
+{
+  "_note": "FALLBACK layout used until the official store_layout.json is supplied. Matches the expected official schema (zone definitions, camera coverage, open hours) so it can be replaced 1:1 without code changes. Drop the official file at data/store_layout.json; loaders prefer it when present.",
+  "schema_version": "1.0",
+  "stores": [
+    {
+      "store_id": "STORE_BLR_002",
+      "city": "Bengaluru",
+      "timezone": "Asia/Kolkata",
+      "open_hours": { "open": "10:00", "close": "22:00" },
+      "cameras": [
+        { "camera_id": "CAM_ENTRY_01", "role": "entry", "covers": ["ENTRY"] },
+        { "camera_id": "CAM_FLOOR_01", "role": "floor", "covers": ["SKINCARE", "MAKEUP", "FRAGRANCE", "HAIRCARE"] },
+        { "camera_id": "CAM_BILLING_01", "role": "billing", "covers": ["BILLING"] }
+      ],
+      "zones": [
+        { "zone_id": "ENTRY", "name": "Entry / Exit", "type": "threshold", "region": [[0.30, 0.70], [0.70, 0.70], [0.70, 1.00], [0.30, 1.00]] },
+        { "zone_id": "SKINCARE", "name": "Skincare", "type": "product", "skus": ["MOISTURISER", "SERUM", "SUNSCREEN"], "region": [[0.00, 0.20], [0.33, 0.20], [0.33, 0.70], [0.00, 0.70]] },
+        { "zone_id": "MAKEUP", "name": "Makeup", "type": "product", "skus": ["LIPSTICK", "FOUNDATION", "KAJAL"], "region": [[0.33, 0.20], [0.66, 0.20], [0.66, 0.70], [0.33, 0.70]] },
+        { "zone_id": "FRAGRANCE", "name": "Fragrance", "type": "product", "skus": ["PERFUME", "DEODORANT"], "region": [[0.66, 0.20], [1.00, 0.20], [1.00, 0.55], [0.66, 0.55]] },
+        { "zone_id": "HAIRCARE", "name": "Haircare", "type": "product", "skus": ["SHAMPOO", "OIL"], "region": [[0.00, 0.00], [0.50, 0.00], [0.50, 0.20], [0.00, 0.20]] },
+        { "zone_id": "BILLING", "name": "Billing Counter", "type": "billing", "region": [[0.66, 0.55], [1.00, 0.55], [1.00, 1.00], [0.66, 1.00]] }
+      ]
+    },
+    {
+      "store_id": "STORE_DEL_005",
+      "city": "Delhi",
+      "timezone": "Asia/Kolkata",
+      "open_hours": { "open": "11:00", "close": "21:30" },
+      "cameras": [
+        { "camera_id": "CAM_ENTRY_01", "role": "entry", "covers": ["ENTRY"] },
+        { "camera_id": "CAM_FLOOR_01", "role": "floor", "covers": ["SKINCARE", "MAKEUP", "FRAGRANCE"] },
+        { "camera_id": "CAM_BILLING_01", "role": "billing", "covers": ["BILLING"] }
+      ],
+      "zones": [
+        { "zone_id": "ENTRY", "name": "Entry / Exit", "type": "threshold", "region": [[0.30, 0.70], [0.70, 0.70], [0.70, 1.00], [0.30, 1.00]] },
+        { "zone_id": "SKINCARE", "name": "Skincare", "type": "product", "skus": ["MOISTURISER", "SERUM"], "region": [[0.00, 0.10], [0.40, 0.10], [0.40, 0.70], [0.00, 0.70]] },
+        { "zone_id": "MAKEUP", "name": "Makeup", "type": "product", "skus": ["LIPSTICK", "FOUNDATION"], "region": [[0.40, 0.10], [0.70, 0.10], [0.70, 0.55], [0.40, 0.55]] },
+        { "zone_id": "FRAGRANCE", "name": "Fragrance", "type": "product", "skus": ["PERFUME"], "region": [[0.70, 0.10], [1.00, 0.10], [1.00, 0.55], [0.70, 0.55]] },
+        { "zone_id": "BILLING", "name": "Billing Counter", "type": "billing", "region": [[0.70, 0.55], [1.00, 0.55], [1.00, 1.00], [0.70, 1.00]] }
+      ]
+    }
+  ]
+}

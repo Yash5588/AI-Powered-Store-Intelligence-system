@@ -1,0 +1,41 @@
+services:
+  api:
+    build: .
+    container_name: store-intelligence-api
+    ports:
+      - "8000:8000"
+    environment:
+      # SQLite file lives on a named volume so events survive restarts.
+      DATABASE_URL: "sqlite:////data/store_intelligence.db"
+      STALE_FEED_THRESHOLD_SECONDS: "600"
+    volumes:
+      - si_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  dashboard:
+    build: .
+    container_name: store-intelligence-dashboard
+    # Reuses the same image; just runs Streamlit instead of uvicorn.
+    command: >
+      streamlit run dashboard/app.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
+      --browser.gatherUsageStats=false
+    ports:
+      - "8501:8501"
+    environment:
+      # Inside the compose network the API is reachable by service name.
+      STORE_INTELLIGENCE_API_URL: "http://api:8000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  si_data:

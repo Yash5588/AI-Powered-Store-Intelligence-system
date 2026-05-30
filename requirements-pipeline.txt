@@ -1,0 +1,11 @@
+# Detection pipeline dependencies (Phase 4).
+# These are intentionally separate from requirements.txt so the API image and
+# CI remain slim — the API never imports OpenCV or YOLO. Install when you want
+# to run pipeline/detect.py against real CCTV clips:
+#
+#   pip install -r requirements.txt -r requirements-pipeline.txt
+#
+# (ultralytics pulls in torch/torchvision, which are large.)
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.58
+numpy>=1.26,<3

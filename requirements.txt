@@ -1,0 +1,24 @@
+# ---- API / core (Phase 1) ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+SQLAlchemy==2.0.36
+
+# ---- Testing ----
+pytest==8.3.4
+pytest-cov==6.0.0
+httpx==0.28.1
+
+# ---- Dashboards ----
+# Terminal dashboard: `rich` is light; it falls back to plain prints if missing.
+rich==13.9.4
+# Web dashboard (Streamlit). Pure-Python, no heavy CV deps.
+streamlit==1.41.1
+pandas==2.2.3
+requests==2.32.3
+streamlit-autorefresh==1.0.1
+
+# ---- Detection pipeline (Phase 4) ----
+# Heavy CV wheels (OpenCV + Ultralytics/torch) live in requirements-pipeline.txt
+# so the API Docker image stays slim and CI fast. Install them only when running
+# the detection pipeline:   pip install -r requirements-pipeline.txt
