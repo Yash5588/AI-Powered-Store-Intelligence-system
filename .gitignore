@@ -1,58 +1,33 @@
-# ---- Python ----
+# Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-.eggs/
-build/
-dist/
-
-# ---- Virtual envs ----
+*.pyc
 .venv/
-venv/
-env/
-
-# ---- Test / coverage ----
 .pytest_cache/
 .coverage
-coverage.xml
 htmlcov/
 
-# ---- Local databases ----
+# Local DB
 *.db
 *.sqlite
 *.sqlite3
 store_intelligence.db
 
-# ---- Logs ----
-*.log
-
-# ---- IDE / OS ----
-.idea/
-.vscode/
-.DS_Store
-
-# ---- ML model weights (downloaded at runtime, not committed) ----
-*.pt
-yolov8*.pt
-
-# ---- CHALLENGE RULE: never commit dataset / video / official files ----
-# Per the problem statement: "do not include the dataset or video files in the repository."
+# Videos / datasets / outputs
+data/clips/
+data/outputs/
 *.mp4
 *.avi
 *.mov
 *.mkv
-videos/
-data/videos/
-data/clips/
-data/outputs/
-data/raw/
-data/official/
+*.zip
 
-# Pipeline output (regenerated from clips/simulator)
+# Generated files
 data/generated_events.jsonl
 
-# Official drop-in files (replace fallbacks at runtime; not committed)
-data/store_layout.json
-data/pos_transactions.csv
-data/sample_events.jsonl
-assertions.py
+# Model weights
+*.pt
+*.onnx
+*.engine
+
+# Env
+.env
