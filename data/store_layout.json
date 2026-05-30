@@ -1,0 +1,65 @@
+{
+  "_note": "OFFICIAL layout. ST1008 (Brigade_Bangalore) zones are derived from the provided store floor plan (Brigade Road - Store layout.xlsx). Coordinates are normalised floor-plan positions (origin top-left) and are a starting approximation: exact polygons should be calibrated against a real CCTV frame per camera (see DESIGN.md). The two demo stores are carried over so synthetic demos keep working. Loaders prefer this file over data/fallback_store_layout.json automatically.",
+  "schema_version": "1.0",
+  "stores": [
+    {
+      "store_id": "ST1008",
+      "store_name": "Brigade_Bangalore",
+      "city": "Bangalore",
+      "timezone": "Asia/Kolkata",
+      "open_hours": { "open": "11:00", "close": "22:00" },
+      "cameras": [
+        { "camera_id": "CAM_ENTRY_01", "role": "entry", "covers": ["ENTRY"] },
+        { "camera_id": "CAM_FLOOR_01", "role": "floor", "covers": ["SKINCARE", "MAKEUP", "FRAGRANCE", "HAIRCARE", "ACCESSORIES", "PMU"] },
+        { "camera_id": "CAM_BILLING_01", "role": "billing", "covers": ["BILLING"] }
+      ],
+      "zones": [
+        { "zone_id": "ENTRY", "name": "Entry / Exit (Glass front, door)", "type": "threshold", "dep_names": [], "region": [[0.00, 0.58], [0.14, 0.58], [0.14, 1.00], [0.00, 1.00]] },
+        { "zone_id": "BILLING", "name": "Cash Counter", "type": "billing", "dep_names": [], "region": [[0.79, 0.28], [0.95, 0.28], [0.95, 0.70], [0.79, 0.70]] },
+        { "zone_id": "PMU", "name": "Permanent Makeup", "type": "product", "skus": ["PMU"], "dep_names": ["makeup"], "region": [[0.88, 0.70], [1.00, 0.70], [1.00, 0.82], [0.88, 0.82]] },
+        { "zone_id": "FRAGRANCE", "name": "Fragrance / Nail Unit", "type": "product", "skus": ["Fragrance", "Nail"], "dep_names": ["fragrance"], "region": [[0.28, 0.33], [0.40, 0.33], [0.40, 0.62], [0.28, 0.62]] },
+        { "zone_id": "ACCESSORIES", "name": "Accessories", "type": "product", "skus": ["Accessories"], "dep_names": [], "region": [[0.78, 0.00], [0.92, 0.00], [0.92, 0.18], [0.78, 0.18]] },
+        { "zone_id": "HAIRCARE", "name": "Haircare (Alps Goodness, Streax)", "type": "product", "skus": ["Alps Goodness", "Streax"], "dep_names": ["hair"], "region": [[0.66, 0.80], [0.88, 0.80], [0.88, 0.98], [0.66, 0.98]] },
+        { "zone_id": "MAKEUP", "name": "Makeup (Makeup Units + front wall brands)", "type": "product", "skus": ["Maybelline", "Faces Canada", "Lakme", "Colorbar", "Sugar", "Swiss Beauty", "Renee", "NY Bae"], "dep_names": ["makeup"], "region": [[0.40, 0.30], [0.66, 0.30], [0.66, 0.98], [0.40, 0.98]] },
+        { "zone_id": "SKINCARE", "name": "Skincare (back wall: Korean, Good Vibes, DermDoc, Minimalist, Aqualogica, Lakme Skin)", "type": "product", "skus": ["EB Korean", "The Face Shop", "Good Vibes", "DermDoc", "Minimalist", "Aqualogica", "Lakme Skin"], "dep_names": ["skin", "bath-and-body", "personal-care"], "region": [[0.10, 0.00], [0.78, 0.00], [0.78, 0.20], [0.10, 0.20]] }
+      ]
+    },
+    {
+      "store_id": "STORE_BLR_002",
+      "city": "Bengaluru",
+      "timezone": "Asia/Kolkata",
+      "open_hours": { "open": "10:00", "close": "22:00" },
+      "cameras": [
+        { "camera_id": "CAM_ENTRY_01", "role": "entry", "covers": ["ENTRY"] },
+        { "camera_id": "CAM_FLOOR_01", "role": "floor", "covers": ["SKINCARE", "MAKEUP", "FRAGRANCE", "HAIRCARE"] },
+        { "camera_id": "CAM_BILLING_01", "role": "billing", "covers": ["BILLING"] }
+      ],
+      "zones": [
+        { "zone_id": "ENTRY", "name": "Entry / Exit", "type": "threshold", "region": [[0.30, 0.70], [0.70, 0.70], [0.70, 1.00], [0.30, 1.00]] },
+        { "zone_id": "SKINCARE", "name": "Skincare", "type": "product", "skus": ["MOISTURISER", "SERUM", "SUNSCREEN"], "region": [[0.00, 0.20], [0.33, 0.20], [0.33, 0.70], [0.00, 0.70]] },
+        { "zone_id": "MAKEUP", "name": "Makeup", "type": "product", "skus": ["LIPSTICK", "FOUNDATION", "KAJAL"], "region": [[0.33, 0.20], [0.66, 0.20], [0.66, 0.70], [0.33, 0.70]] },
+        { "zone_id": "FRAGRANCE", "name": "Fragrance", "type": "product", "skus": ["PERFUME", "DEODORANT"], "region": [[0.66, 0.20], [1.00, 0.20], [1.00, 0.55], [0.66, 0.55]] },
+        { "zone_id": "HAIRCARE", "name": "Haircare", "type": "product", "skus": ["SHAMPOO", "OIL"], "region": [[0.00, 0.00], [0.50, 0.00], [0.50, 0.20], [0.00, 0.20]] },
+        { "zone_id": "BILLING", "name": "Billing Counter", "type": "billing", "region": [[0.66, 0.55], [1.00, 0.55], [1.00, 1.00], [0.66, 1.00]] }
+      ]
+    },
+    {
+      "store_id": "STORE_DEL_005",
+      "city": "Delhi",
+      "timezone": "Asia/Kolkata",
+      "open_hours": { "open": "11:00", "close": "21:30" },
+      "cameras": [
+        { "camera_id": "CAM_ENTRY_01", "role": "entry", "covers": ["ENTRY"] },
+        { "camera_id": "CAM_FLOOR_01", "role": "floor", "covers": ["SKINCARE", "MAKEUP", "FRAGRANCE"] },
+        { "camera_id": "CAM_BILLING_01", "role": "billing", "covers": ["BILLING"] }
+      ],
+      "zones": [
+        { "zone_id": "ENTRY", "name": "Entry / Exit", "type": "threshold", "region": [[0.30, 0.70], [0.70, 0.70], [0.70, 1.00], [0.30, 1.00]] },
+        { "zone_id": "SKINCARE", "name": "Skincare", "type": "product", "skus": ["MOISTURISER", "SERUM"], "region": [[0.00, 0.10], [0.40, 0.10], [0.40, 0.70], [0.00, 0.70]] },
+        { "zone_id": "MAKEUP", "name": "Makeup", "type": "product", "skus": ["LIPSTICK", "FOUNDATION"], "region": [[0.40, 0.10], [0.70, 0.10], [0.70, 0.55], [0.40, 0.55]] },
+        { "zone_id": "FRAGRANCE", "name": "Fragrance", "type": "product", "skus": ["PERFUME"], "region": [[0.70, 0.10], [1.00, 0.10], [1.00, 0.55], [0.70, 0.55]] },
+        { "zone_id": "BILLING", "name": "Billing Counter", "type": "billing", "region": [[0.70, 0.55], [1.00, 0.55], [1.00, 1.00], [0.70, 1.00]] }
+      ]
+    }
+  ]
+}

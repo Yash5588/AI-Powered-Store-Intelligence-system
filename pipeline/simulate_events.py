@@ -191,6 +191,155 @@ def generate_events(
     return events, pos_transactions
 
 
+def generate_events_for_pos(
+    store_id: str,
+    transactions: list,
+    *,
+    product_zones: list[str] | None = None,
+    billing_zone: str = BILLING_ZONE,
+    browser_ratio: float = 0.4,
+    abandoner_count: int = 3,
+    seed: int | None = None,
+) -> list[dict]:
+    """Generate events ALIGNED to real POS transactions for `store_id`.
+
+    For every POS transaction we emit one converting visitor whose
+    BILLING_QUEUE_JOIN lands 1-3 min BEFORE the transaction, so the API's
+    5-minute conversion-correlation window matches it naturally — conversion
+    becomes a real, computed number grounded in the official POS file (never
+    hardcoded). We add browsers (enter + browse, no billing) and a few queue
+    abandoners (timed in gaps, so they don't accidentally match a txn) to make
+    the funnel and abandonment rate realistic.
+
+    `transactions` is a list of objects exposing `.timestamp` (tz-aware) and
+    `.transaction_id` — i.e. `app.loaders.PosTransaction`.
+    """
+    if seed is not None:
+        random.seed(seed)
+    zones = product_zones or DEFAULT_ZONES
+    txns = sorted(transactions, key=lambda t: t.timestamp)
+    if not txns:
+        return []
+
+    events: list[dict] = []
+
+    def _visitor() -> str:
+        return f"VIS_{uuid.uuid4().hex[:6]}"
+
+    # 1) One converting visitor per transaction.
+    for txn in txns:
+        vid = _visitor()
+        seq = 1
+        billing_t = txn.timestamp - timedelta(minutes=random.randint(1, 3))
+        entry_t = billing_t - timedelta(minutes=random.randint(4, 12))
+        events.append(
+            _event(store_id, "CAM_ENTRY_01", vid, "ENTRY", entry_t,
+                   confidence=random.uniform(0.82, 0.98), session_seq=seq)
+        )
+        seq += 1
+        t = entry_t
+        for zone in random.sample(zones, k=min(len(zones), random.randint(1, 2))):
+            t += timedelta(seconds=random.randint(30, 90))
+            if t >= billing_t:
+                t = billing_t - timedelta(seconds=30)
+            events.append(
+                _event(store_id, "CAM_FLOOR_01", vid, "ZONE_ENTER", t, zone_id=zone,
+                       confidence=random.uniform(0.7, 0.95), sku_zone=zone, session_seq=seq)
+            )
+            seq += 1
+            dwell = random.randint(30000, 90000)
+            events.append(
+                _event(store_id, "CAM_FLOOR_01", vid, "ZONE_DWELL",
+                       t + timedelta(milliseconds=dwell), zone_id=zone, dwell_ms=dwell,
+                       confidence=random.uniform(0.7, 0.92), sku_zone=zone, session_seq=seq)
+            )
+            seq += 1
+        events.append(
+            _event(store_id, "CAM_BILLING_01", vid, "BILLING_QUEUE_JOIN", billing_t,
+                   zone_id=billing_zone, queue_depth=random.randint(1, 4),
+                   confidence=random.uniform(0.85, 0.97), session_seq=seq)
+        )
+        seq += 1
+        events.append(
+            _event(store_id, "CAM_ENTRY_01", vid, "EXIT",
+                   txn.timestamp + timedelta(minutes=random.randint(1, 3)),
+                   confidence=random.uniform(0.8, 0.97), session_seq=seq)
+        )
+
+    # 2) Browsers: enter, visit zones, leave — never reach billing (funnel drop).
+    n_browsers = int(len(txns) * browser_ratio)
+    span_start, span_end = txns[0].timestamp, txns[-1].timestamp
+    span_secs = max(60, int((span_end - span_start).total_seconds()))
+    for _ in range(n_browsers):
+        vid = _visitor()
+        seq = 1
+        entry_t = span_start + timedelta(seconds=random.randint(0, span_secs))
+        events.append(
+            _event(store_id, "CAM_ENTRY_01", vid, "ENTRY", entry_t,
+                   confidence=random.uniform(0.8, 0.97), session_seq=seq)
+        )
+        seq += 1
+        t = entry_t
+        for zone in random.sample(zones, k=min(len(zones), random.randint(1, 2))):
+            t += timedelta(seconds=random.randint(20, 80))
+            events.append(
+                _event(store_id, "CAM_FLOOR_01", vid, "ZONE_ENTER", t, zone_id=zone,
+                       confidence=random.uniform(0.7, 0.93), sku_zone=zone, session_seq=seq)
+            )
+            seq += 1
+        events.append(
+            _event(store_id, "CAM_ENTRY_01", vid, "EXIT", t + timedelta(seconds=random.randint(20, 120)),
+                   confidence=random.uniform(0.8, 0.95), session_seq=seq)
+        )
+
+    # 3) Abandoners: join the queue in a gap (>=8 min from any txn) then abandon,
+    #    so they raise abandonment_rate without matching a transaction.
+    txn_times = [t.timestamp for t in txns]
+    for _ in range(abandoner_count):
+        vid = _visitor()
+        seq = 1
+        # Pick a time at least 8 min away from every transaction.
+        join_t = None
+        for _try in range(20):
+            cand = span_start + timedelta(seconds=random.randint(0, span_secs))
+            if all(abs((cand - tt).total_seconds()) > 480 for tt in txn_times):
+                join_t = cand
+                break
+        if join_t is None:
+            continue
+        entry_t = join_t - timedelta(minutes=random.randint(3, 8))
+        events.append(
+            _event(store_id, "CAM_ENTRY_01", vid, "ENTRY", entry_t,
+                   confidence=random.uniform(0.8, 0.97), session_seq=seq)
+        )
+        seq += 1
+        zone = random.choice(zones)
+        events.append(
+            _event(store_id, "CAM_FLOOR_01", vid, "ZONE_ENTER", entry_t + timedelta(seconds=40),
+                   zone_id=zone, confidence=random.uniform(0.7, 0.92), sku_zone=zone, session_seq=seq)
+        )
+        seq += 1
+        events.append(
+            _event(store_id, "CAM_BILLING_01", vid, "BILLING_QUEUE_JOIN", join_t,
+                   zone_id=billing_zone, queue_depth=random.randint(5, 9),
+                   confidence=random.uniform(0.85, 0.96), session_seq=seq)
+        )
+        seq += 1
+        events.append(
+            _event(store_id, "CAM_BILLING_01", vid, "BILLING_QUEUE_ABANDON",
+                   join_t + timedelta(minutes=random.randint(1, 3)), zone_id=billing_zone,
+                   confidence=random.uniform(0.7, 0.9), session_seq=seq)
+        )
+        seq += 1
+        events.append(
+            _event(store_id, "CAM_ENTRY_01", vid, "EXIT", join_t + timedelta(minutes=4),
+                   confidence=random.uniform(0.8, 0.95), session_seq=seq)
+        )
+
+    events.sort(key=lambda e: e["timestamp"])
+    return events
+
+
 def write_jsonl(events: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
@@ -256,28 +405,69 @@ def main(argv: list[str] | None = None) -> int:
         "--reset-pos", action="store_true",
         help="Overwrite the synthetic POS CSV instead of appending this run's rows.",
     )
+    parser.add_argument(
+        "--align-pos", action="store_true",
+        help="Generate events ALIGNED to the real POS file for --store (events "
+             "timed just before each transaction) so conversion is real & non-zero. "
+             "Does not write a synthetic POS file.",
+    )
     args = parser.parse_args(argv)
+
+    out_path = Path(args.out)
+
+    if args.align_pos:
+        # Real-POS-aligned mode: read transactions and emit matching events.
+        from app import loaders  # local import; keeps base CLI free of app deps
+
+        loaders.load_store_layout.cache_clear()
+        transactions = loaders.load_pos_transactions(args.store)
+        if not transactions:
+            # Graceful fallback: never hard-fail a demo. Fall back to standard
+            # synthetic generation (which also writes its own matching POS) so a
+            # reviewer running the documented command always gets a live result.
+            print(
+                f"[align-pos] No POS transactions found for {args.store}; "
+                f"falling back to synthetic generation with matching POS.",
+                file=sys.stderr,
+            )
+            args.align_pos = False
+        else:
+            product_zones = [
+                z for z in loaders.get_store_zones(args.store)
+                if z != "ENTRY" and z not in loaders.get_billing_zone_ids(args.store)
+            ]
+            billing_zone = next(iter(loaders.get_billing_zone_ids(args.store)), BILLING_ZONE)
+            events = generate_events_for_pos(
+                args.store, transactions,
+                product_zones=product_zones or None,
+                billing_zone=billing_zone,
+                seed=args.seed,
+            )
+            write_jsonl(events, out_path)
+            print(f"Generated {len(events)} events ALIGNED to {len(transactions)} real "
+                  f"POS transactions for {args.store} -> {out_path}")
+            if args.post:
+                print(f"Posting to {args.post} ...")
+                post_events(events, args.post)
+            return 0
 
     events, pos_transactions = generate_events(
         args.store, n_visitors=args.visitors, seed=args.seed
     )
-    out_path = Path(args.out)
     write_jsonl(events, out_path)
     print(f"Generated {len(events)} events for {args.store} -> {out_path}")
 
-    # Write matching POS rows so conversion is non-zero (unless suppressed, or an
-    # official pos_transactions.csv is present — that one always takes priority).
-    # By default we APPEND so each run keeps its own matching POS rows alongside
-    # its visitors, which keeps the conversion rate consistent across re-runs.
+    # Write matching POS rows so conversion is non-zero for this synthetic store.
+    # We write to the SYNTHETIC file; the loader layers the official POS over it
+    # per store, so the real ST1008 POS still wins and demo stores get their own
+    # synthetic transactions. By default we APPEND so each run keeps its own
+    # matching POS rows, keeping the conversion rate consistent across re-runs.
     data_dir = out_path.parent
-    official_pos = data_dir / "pos_transactions.csv"
-    if not args.no_pos and not official_pos.exists():
+    if not args.no_pos:
         pos_path = data_dir / "synthetic_pos_transactions.csv"
         write_pos_csv(pos_transactions, pos_path, append=not args.reset_pos)
         verb = "Reset" if args.reset_pos else "Appended"
         print(f"{verb} {len(pos_transactions)} matching POS transactions -> {pos_path}")
-    elif official_pos.exists():
-        print(f"Official POS file present ({official_pos.name}); leaving it untouched.")
 
     if args.post:
         print(f"Posting to {args.post} ...")

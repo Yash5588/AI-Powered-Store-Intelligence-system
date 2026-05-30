@@ -156,3 +156,31 @@ and re-tested; the loader seam costs a few lines now and makes the official-file
 swap a non-event. The same principle covers `sample_events.jsonl` (drop in as the
 validation set) and `assertions.py` (place at repo root; `pytest` runs it
 alongside the suite).
+
+**Update — the real Brigade data arrived and proved the seam.** The real store
+files (`Brigade Road - Store layout.xlsx` floor plan + `Brigade_Bangalore_10_April_26.csv`
+POS export) were later provided and dropped in as the official `data/store_layout.json`
+(store `ST1008`) and `data/pos_transactions.csv` — **no caller code changed**. One
+extension was needed and made *inside the loader only*: the real POS is a *rich
+line-item export* (one row per SKU: `order_id, order_date, order_time, dep_name,
+total_amount, …`) rather than the simple one-row-per-transaction schema. So
+`load_pos_transactions` now **auto-detects** the schema and aggregates line-items
+by `order_id` (basket = Σ `total_amount`; `DD-MM-YYYY HH:MM:SS` → UTC). The simple
+synthetic schema still parses unchanged. This is the loader seam paying off exactly
+as intended — the messy real format is absorbed in one place behind the same
+`PosTransaction` contract the analytics already consume.
+
+## Decision 5 — No model retraining from the provided real data
+
+**Context.** When the real Brigade files arrived, the obvious question was
+"can we now train/fine-tune for better accuracy?"
+
+**What I chose and why.** **No — keep the pretrained YOLOv8 detector.** Neither
+file is *labelled image data*: the CSV is sales rows and the XLSX is a top-down
+floor-plan picture. Training or fine-tuning a person detector needs annotated
+camera frames (bounding boxes + classes) from this store, which we don't have.
+Using sales/floor-plan metadata as "training data" would be category-error
+rigour. Instead this data is used where it genuinely raises accuracy — **real
+zone geometry, real product categories, and a real, computed conversion rate**
+(via `--align-pos`). The event seam keeps a store-specific fine-tuned detector a
+drop-in upgrade if labelled frames are ever captured. (See DESIGN.md §5.)

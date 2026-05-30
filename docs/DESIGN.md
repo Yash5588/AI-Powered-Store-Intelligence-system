@@ -53,7 +53,13 @@ is exactly how this project is sequenced (the API was built and tested first).
   module (and the bulk of its logic) is unit-testable without the heavy wheels.
 - **`pipeline/tracker.py`** — `CentroidTracker`: a dependency-free greedy
   nearest-centroid tracker with approximate trajectory-distance re-entry
-  detection. Used as the fallback when ByteTrack ids aren't available.
+  detection. Used as the fallback when ByteTrack ids aren't available. It is a
+  genuine **multi-object** tracker, so **group entry** (several people crossing
+  the threshold together) is handled correctly: each simultaneous detection gets
+  its own track and a distinct, stable `visitor_id`, so a group of four counts as
+  four visitors — not one — and ids don't swap as the group moves together
+  (covered by `test_tracker_group_entry_distinct_ids` /
+  `test_tracker_group_stays_distinct_across_frames`).
 - **`pipeline/zones.py`** — loads normalised polygon zones from the layout and
   classifies a point to a zone (ray-casting point-in-polygon), with default
   frame regions when no geometry/layout exists.
@@ -154,7 +160,45 @@ overrode it.
    CHOICES.md. The API already excludes `is_staff=true` correctly, so the seam is
    ready the moment real staff labels exist.
 
-## 5. Known limitations / next steps
+## 5. Grounding in the real Brigade Road store
+
+The system ships with two synthetic/fallback datasets so it always runs, but it
+is now also grounded in the **real Brigade Road (Bangalore) store** data:
+
+- **`data/store_layout.json` (official)** — store `ST1008` zones are derived
+  directly from the provided floor plan (`Brigade Road - Store layout.xlsx`):
+  `ENTRY` (glass front), `SKINCARE` (back wall — Korean/Good Vibes/DermDoc/
+  Minimalist/Aqualogica/Lakme Skin), `MAKEUP` (centre makeup units + front-wall
+  brands), `FRAGRANCE`/Nail unit, `HAIRCARE` (Alps Goodness, Streax),
+  `ACCESSORIES`, `PMU`, and `BILLING` (cash counter). Each zone carries the real
+  brand `skus` and a `dep_names` link to the POS department categories so the
+  heatmap and SKU attribution map onto real product groups. The two demo stores
+  are carried over in the same file so synthetic demos keep working.
+- **`data/pos_transactions.csv` (official)** — the real Brigade POS export
+  (`ST1008`, 10-Apr-2026: 24 orders, 101 line-items, ₹34.3k). `app/loaders.py`
+  **auto-detects** this rich line-item schema and groups it into one transaction
+  per `order_id` (basket = Σ `total_amount`, timestamp = `order_date` +
+  `order_time` parsed from `DD-MM-YYYY HH:MM:SS`). The simple synthetic schema
+  still parses unchanged — the official file dropped in with **zero code edits to
+  callers**, exactly as designed.
+- **POS-aligned replay** — `pipeline/simulate_events.py --align-pos --store
+  ST1008` reads those real transactions and emits a visitor stream whose
+  `BILLING_QUEUE_JOIN` lands 1–3 min before each real sale, so the API's 5-minute
+  conversion-correlation window matches naturally. Conversion (≈67% in the demo)
+  is therefore a *computed* number grounded in the official POS file — never
+  hardcoded — plus browsers and queue-abandoners for a realistic nested funnel.
+
+**Why we did not retrain the detector.** Neither provided file contains *labelled
+image data* (no bounding boxes, no class labels, no video). They are business
+metadata (sales rows + a floor-plan picture), which improves analytics realism
+but is useless as YOLO training data. Retraining or fine-tuning a person
+detector requires annotated frames from this store's cameras; with none
+available, a pretrained **YOLOv8** person detector is the correct, honest choice.
+The clean event seam means a store-specific fine-tuned detector can be swapped in
+later without touching the API. The floor-plan polygons are normalised
+approximations and should be calibrated against a real CCTV frame per camera.
+
+## 6. Known limitations / next steps
 
 - **SQLite is single-writer**; at 40 live stores this is the first bottleneck —
   mitigated by the `DATABASE_URL` PostgreSQL swap path (see CHOICES.md).

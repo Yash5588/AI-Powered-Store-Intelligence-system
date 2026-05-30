@@ -147,15 +147,23 @@ def test_main_no_pos_flag_skips_csv(tmp_path, capsys):
     assert not pos.exists()
 
 
-def test_main_leaves_official_pos_untouched(tmp_path, capsys):
+def test_main_layers_synthetic_over_untouched_official_pos(tmp_path, capsys):
+    """Official POS file is never modified, but synthetic POS is still written.
+
+    The loader layers official over synthetic per store, so writing synthetic
+    rows for a demo store is safe (the official file always wins for its own
+    stores) and the official file's bytes stay exactly as provided.
+    """
     out = tmp_path / "generated_events.jsonl"
     official = tmp_path / "pos_transactions.csv"
-    official.write_text("store_id,transaction_id,timestamp,basket_value_inr\n", encoding="utf-8")
+    official_content = "store_id,transaction_id,timestamp,basket_value_inr\n"
+    official.write_text(official_content, encoding="utf-8")
     synthetic = tmp_path / "synthetic_pos_transactions.csv"
     main(["--store", "STORE_BLR_002", "--visitors", "3", "--seed", "3", "--out", str(out)])
-    captured = capsys.readouterr()
-    assert "Official POS file present" in captured.out
-    assert not synthetic.exists()
+    # Official file untouched (byte-for-byte).
+    assert official.read_text(encoding="utf-8") == official_content
+    # Synthetic file written so the demo store still gets a conversion rate.
+    assert synthetic.exists()
 
 
 def test_main_posts_when_post_url_given(tmp_path, capsys):

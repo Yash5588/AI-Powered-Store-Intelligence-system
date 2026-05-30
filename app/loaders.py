@@ -48,6 +48,41 @@ def _parse_ts(raw: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _parse_date_time(date_raw: str, time_raw: str) -> datetime:
+    """Parse a real-POS ``order_date`` + ``order_time`` into tz-aware UTC.
+
+    Handles ``DD-MM-YYYY`` / ``YYYY-MM-DD`` / ``DD/MM/YYYY`` dates with an
+    ``HH:MM:SS`` (or ``HH:MM``) time. Naive values are treated as UTC.
+    """
+    date_raw = (date_raw or "").strip()
+    time_raw = (time_raw or "").strip() or "00:00:00"
+    if time_raw.count(":") == 1:
+        time_raw += ":00"
+
+    day = month = year = None
+    if "-" in date_raw:
+        parts = date_raw.split("-")
+    elif "/" in date_raw:
+        parts = date_raw.split("/")
+    else:
+        parts = [date_raw]
+    if len(parts) == 3:
+        a, b, c = (p.strip() for p in parts)
+        if len(a) == 4:  # YYYY-MM-DD
+            year, month, day = int(a), int(b), int(c)
+        else:            # DD-MM-YYYY (Brigade format)
+            day, month, year = int(a), int(b), int(c)
+    else:
+        raise ValueError(f"unparseable date: {date_raw!r}")
+
+    h, m, s = (int(x) for x in time_raw.split(":")[:3])
+    return datetime(year, month, day, h, m, s, tzinfo=timezone.utc)
+
+
+# Columns that mark the rich "real POS" line-item schema (Brigade export).
+_RICH_POS_MARKERS = {"order_id", "order_date", "order_time", "total_amount"}
+
+
 def resolve_pos_path() -> Path | None:
     if POS_OFFICIAL.exists():
         return POS_OFFICIAL
@@ -65,41 +100,115 @@ def resolve_layout_path() -> Path | None:
 
 
 def load_pos_transactions(store_id: str | None = None) -> list[PosTransaction]:
-    """Load POS rows (optionally filtered by store). Missing file -> empty list.
+    """Load POS transactions (optionally filtered by store). Missing -> empty.
 
-    Tolerant of header/column variations so the official file drops in cleanly.
+    Each file's schema is auto-detected so the official file drops in without
+    code changes:
+
+    1. **Simple** (one row per transaction): ``store_id, transaction_id,
+       timestamp, basket_value_inr`` — used by the synthetic fallback.
+    2. **Rich line-item export** (the real Brigade POS): one row per SKU with
+       ``order_id, order_date, order_time, total_amount, store_id`` — line-items
+       are grouped into a single transaction per ``order_id`` (basket value =
+       sum of ``total_amount``, timestamp = order date+time).
+
+    **Layering:** the official file is *layered over* the synthetic fallback per
+    ``(store_id, transaction_id)`` — official rows always win, and the synthetic
+    file fills in stores the official file doesn't cover. This means a store with
+    real POS uses it, while demo stores (only in the synthetic file) still
+    produce a real, computed conversion rate.
     """
-    path = resolve_pos_path()
-    if path is None:
-        return []
+    official: list[PosTransaction] = (
+        _parse_pos_file(POS_OFFICIAL, store_id) if POS_OFFICIAL.exists() else []
+    )
+    # The official file is authoritative for every store it contains; synthetic
+    # rows only fill in stores the official file does not cover at all.
+    official_stores = {t.store_id for t in official}
+    synthetic: list[PosTransaction] = (
+        [t for t in _parse_pos_file(POS_FALLBACK, store_id) if t.store_id not in official_stores]
+        if POS_FALLBACK.exists()
+        else []
+    )
 
-    txns: list[PosTransaction] = []
-    with path.open(newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            # Normalise keys defensively (strip/lower) for header tolerance.
-            norm = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-            sid = norm.get("store_id")
-            ts_raw = norm.get("timestamp")
-            if not sid or not ts_raw:
-                continue
-            if store_id is not None and sid != store_id:
-                continue
-            try:
-                ts = _parse_ts(ts_raw)
-                value = float(norm.get("basket_value_inr") or norm.get("amount") or 0.0)
-            except (ValueError, TypeError):
-                continue  # skip malformed POS rows rather than crashing analytics
-            txns.append(
-                PosTransaction(
-                    store_id=sid,
-                    transaction_id=norm.get("transaction_id", ""),
-                    timestamp=ts,
-                    basket_value_inr=value,
-                )
-            )
+    txns = official + synthetic
     txns.sort(key=lambda t: t.timestamp)
     return txns
+
+
+def _parse_pos_file(path: Path, store_id: str | None) -> list[PosTransaction]:
+    """Parse a single POS file, auto-detecting simple vs. rich line-item schema."""
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        rows = [
+            {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
+            for row in reader
+        ]
+    if not rows:
+        return []
+    header = set(rows[0].keys())
+    if _RICH_POS_MARKERS.issubset(header):
+        return _aggregate_rich_pos(rows, store_id)
+    return _parse_simple_pos(rows, store_id)
+
+
+def _parse_simple_pos(rows: list[dict], store_id: str | None) -> list[PosTransaction]:
+    txns: list[PosTransaction] = []
+    for norm in rows:
+        sid = norm.get("store_id")
+        ts_raw = norm.get("timestamp")
+        if not sid or not ts_raw:
+            continue
+        if store_id is not None and sid != store_id:
+            continue
+        try:
+            ts = _parse_ts(ts_raw)
+            value = float(norm.get("basket_value_inr") or norm.get("amount") or 0.0)
+        except (ValueError, TypeError):
+            continue  # skip malformed rows rather than crashing analytics
+        txns.append(
+            PosTransaction(
+                store_id=sid,
+                transaction_id=norm.get("transaction_id", ""),
+                timestamp=ts,
+                basket_value_inr=value,
+            )
+        )
+    return txns
+
+
+def _aggregate_rich_pos(rows: list[dict], store_id: str | None) -> list[PosTransaction]:
+    """Group real-POS line-items into one transaction per order_id."""
+    orders: dict[str, dict] = {}
+    for norm in rows:
+        sid = norm.get("store_id")
+        oid = norm.get("order_id")
+        if not sid or not oid:
+            continue
+        if store_id is not None and sid != store_id:
+            continue
+        try:
+            amount = float(norm.get("total_amount") or 0.0)
+        except (ValueError, TypeError):
+            amount = 0.0
+        agg = orders.get(oid)
+        if agg is None:
+            try:
+                ts = _parse_date_time(norm.get("order_date", ""), norm.get("order_time", ""))
+            except (ValueError, TypeError):
+                continue  # cannot place this order in time -> skip
+            orders[oid] = {"store_id": sid, "timestamp": ts, "value": amount}
+        else:
+            agg["value"] += amount
+
+    return [
+        PosTransaction(
+            store_id=o["store_id"],
+            transaction_id=oid,
+            timestamp=o["timestamp"],
+            basket_value_inr=round(o["value"], 2),
+        )
+        for oid, o in orders.items()
+    ]
 
 
 @lru_cache(maxsize=1)

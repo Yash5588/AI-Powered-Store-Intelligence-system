@@ -24,6 +24,11 @@ data/outputs/
 # Generated files
 data/generated_events.jsonl
 
+# NOTE: data/pos_transactions.csv is the DE-IDENTIFIED real Brigade POS export
+# (all customer + employee personal fields stripped — see scripts/deidentify note
+# in README). It is intentionally committed so the real-data demo works out of
+# the box. Never commit the raw export that still contains names/phone numbers.
+
 # Model weights
 *.pt
 *.onnx

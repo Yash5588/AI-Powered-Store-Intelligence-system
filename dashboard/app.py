@@ -83,10 +83,12 @@ def sidebar() -> dict:
         store_ids = sorted({s["store_id"] for s in health["stores"]})
 
     if store_ids:
-        default_idx = store_ids.index("STORE_BLR_002") if "STORE_BLR_002" in store_ids else 0
+        # Prefer the real Brigade store (ST1008), then the demo store.
+        default_store = next((s for s in ("ST1008", "STORE_BLR_002") if s in store_ids), None)
+        default_idx = store_ids.index(default_store) if default_store else 0
         store_id = st.sidebar.selectbox("Store", store_ids, index=default_idx)
     else:
-        store_id = st.sidebar.text_input("Store ID", value="STORE_BLR_002")
+        store_id = st.sidebar.text_input("Store ID", value="ST1008")
 
     st.sidebar.divider()
     auto_refresh = st.sidebar.toggle("Auto-refresh", value=False)
