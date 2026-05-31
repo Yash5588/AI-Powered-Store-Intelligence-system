@@ -14,12 +14,15 @@ Cross-cutting concerns handled here:
 from __future__ import annotations
 
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import __version__
@@ -62,6 +65,21 @@ app = FastAPI(
     version=__version__,
     description="AI-powered Store Intelligence System — real-time offline retail analytics.",
     lifespan=lifespan,
+)
+
+# CORS so the React dev server (and the containerised frontend) can call the API
+# from the browser. Origins are overridable via CORS_ORIGINS (comma-separated).
+_default_origins = (
+    "http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000,"
+    "http://localhost:5173,http://127.0.0.1:5173"
+)
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", _default_origins).split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -142,11 +160,14 @@ async def root() -> dict:
         "status": "ok",
         "endpoints": [
             "/events/ingest",
+            "/events/clear",
             "/health",
             "/stores/{id}/metrics",
             "/stores/{id}/funnel",
             "/stores/{id}/heatmap",
             "/stores/{id}/anomalies",
+            "/videos",
+            "/videos/upload",
             "/docs",
         ],
     }
@@ -242,6 +263,171 @@ async def store_heatmap(store_id: str, request: Request) -> JSONResponse:
 async def store_anomalies(store_id: str, request: Request) -> JSONResponse:
     """Active operational anomalies with severity and suggested actions."""
     return _analytics_response(request, store_id, detect_anomalies)
+
+
+# --------------------------------------------------------------------------- #
+# Database management
+# --------------------------------------------------------------------------- #
+@app.delete("/events/clear")
+async def clear_events() -> JSONResponse:
+    """Delete ALL events from the database and reset video job state.
+
+    Intended for demo resets — gives a clean slate without restarting the server.
+    """
+    from app.models import EventRecord as ER
+
+    db = next(get_db())
+    try:
+        count = db.query(ER).count()
+        db.query(ER).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    # Also clear the in-memory video-job registry so the UI starts fresh.
+    try:
+        from app import video_jobs
+        video_jobs.store._jobs.clear()
+        video_jobs.store._events.clear()
+    except Exception:
+        pass  # non-critical; events table is the source of truth
+
+    return JSONResponse(
+        status_code=200,
+        content={"status": "ok", "deleted_events": count},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Video processing jobs (upload -> background detection -> live status)
+# --------------------------------------------------------------------------- #
+class ProcessRequest(BaseModel):
+    store_id: str = Field(default="ST1008")
+    camera_id: str = Field(default="CAM_FLOOR_A_01")
+    layout_path: str | None = Field(default="data/store_layout.json")
+    max_frames: int | None = Field(default=300)
+    save_annotated_video: bool = Field(default=False)
+    all_staff: bool = Field(default=False)
+
+
+@app.post("/videos/upload")
+async def upload_video(file: UploadFile = File(...)) -> JSONResponse:
+    """Accept a CCTV clip, store it locally, and register a processing job."""
+    from app import video_jobs
+
+    data = await file.read()
+    if not data:
+        return JSONResponse(status_code=422, content=_error_body("EMPTY_FILE", "Uploaded file is empty."))
+    try:
+        job = video_jobs.save_upload(file.filename or "upload.mp4", data)
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content=_error_body("UNSUPPORTED_VIDEO", str(exc)))
+    return JSONResponse(
+        status_code=201,
+        content={"job_id": job.job_id, "filename": job.filename, "size_bytes": len(data)},
+    )
+
+
+@app.post("/videos/{job_id}/process")
+async def process_video(job_id: str, body: ProcessRequest) -> JSONResponse:
+    """Start background detection on a previously uploaded clip."""
+    from app import video_jobs
+
+    job = video_jobs.store.get(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content=_error_body("JOB_NOT_FOUND", f"No job '{job_id}'."))
+    # Stockroom is never a customer area: force all_staff for safety.
+    all_staff = body.all_staff or body.camera_id == "CAM_STOCKROOM_01"
+    started = video_jobs.start_processing(
+        job_id,
+        store_id=body.store_id,
+        camera_id=body.camera_id,
+        layout_path=body.layout_path,
+        max_frames=body.max_frames,
+        save_annotated_video=body.save_annotated_video,
+        all_staff=all_staff,
+    )
+    if not started:
+        return JSONResponse(
+            status_code=409,
+            content=_error_body("JOB_NOT_STARTABLE", "Job is already running or missing."),
+        )
+    return JSONResponse(status_code=202, content=video_jobs.store.get(job_id).public())
+
+
+@app.get("/videos/{job_id}/status")
+async def video_status(job_id: str) -> JSONResponse:
+    from app import video_jobs
+
+    job = video_jobs.store.get(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content=_error_body("JOB_NOT_FOUND", f"No job '{job_id}'."))
+    return JSONResponse(status_code=200, content=job.public())
+
+
+@app.get("/videos/{job_id}/events")
+async def video_events(job_id: str, limit: int = 100) -> JSONResponse:
+    from app import video_jobs
+
+    job = video_jobs.store.get(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content=_error_body("JOB_NOT_FOUND", f"No job '{job_id}'."))
+    events = video_jobs.store.recent_events(job_id, limit=limit)
+    return JSONResponse(status_code=200, content={"job_id": job_id, "count": len(events), "events": events})
+
+
+@app.get("/videos/{job_id}/annotated-video")
+async def video_annotated(job_id: str):
+    from app import video_jobs
+
+    job = video_jobs.store.get(job_id)
+    if job is None or not job.annotated_video_path:
+        return JSONResponse(status_code=404, content=_error_body("NO_VIDEO", "No annotated video for this job."))
+    path = video_jobs.Path(job.annotated_video_path)
+    if not path.exists():
+        return JSONResponse(status_code=404, content=_error_body("NO_VIDEO", "Annotated video not ready."))
+    return FileResponse(
+        str(path), media_type="video/webm", filename=path.name,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/videos/{job_id}/original-video")
+async def video_original(job_id: str):
+    from app import video_jobs
+
+    job = video_jobs.store.get(job_id)
+    if job is None or not job.video_path:
+        return JSONResponse(status_code=404, content=_error_body("NO_VIDEO", "No original video for this job."))
+    path = video_jobs.Path(job.video_path)
+    if not path.exists():
+        return JSONResponse(status_code=404, content=_error_body("NO_VIDEO", "Original video not found."))
+    return FileResponse(str(path), media_type="video/mp4", filename=path.name)
+
+
+@app.get("/videos/{job_id}/latest-frame")
+async def video_latest_frame(job_id: str):
+    from app import video_jobs
+
+    job = video_jobs.store.get(job_id)
+    if job is None or not job.latest_frame_path:
+        return JSONResponse(status_code=404, content=_error_body("NO_FRAME", "No live frame available."))
+    path = video_jobs.Path(job.latest_frame_path)
+    if not path.exists():
+        return JSONResponse(status_code=404, content=_error_body("NO_FRAME", "Frame not ready yet."))
+    from starlette.responses import Response
+    frame_bytes = path.read_bytes()
+    return Response(content=frame_bytes, media_type="image/jpeg", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+    })
+
+@app.get("/videos")
+async def list_videos(limit: int = 50) -> JSONResponse:
+    from app import video_jobs
+
+    jobs = [j.public() for j in video_jobs.store.list(limit=limit)]
+    return JSONResponse(status_code=200, content={"count": len(jobs), "jobs": jobs})
 
 
 @app.get("/health", response_model=HealthResponse)

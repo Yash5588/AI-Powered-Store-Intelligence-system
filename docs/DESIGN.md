@@ -71,6 +71,42 @@ is exactly how this project is sequenced (the API was built and tested first).
 - **`pipeline/simulate_events.py`** — generates the same schema without a clip,
   for exercising the API/dashboard. **`pipeline/run.sh`** processes a clip folder.
 
+### The React frontend (`frontend/`)
+
+A **Vite + React** single-page application that is a **thin presentation layer**
+over the FastAPI backend. **Zero analytics are computed or hardcoded in the
+frontend** — every number, chart, table, and status displayed is fetched from
+the API (`/metrics`, `/funnel`, `/heatmap`, `/anomalies`, `/videos/*`).
+
+- **`frontend/src/api.js`** — axios client. `VITE_API_BASE_URL` defaults to
+  `http://localhost:8000`; overridable at build time for Docker.
+- **Pages:** Overview, Video Processing, Live Events, Metrics, Funnel, Heatmap,
+  Anomalies, Runbook. Each page handles loading, error, and empty states.
+- **Video Processing page** — upload a clip, select camera/store/params, start
+  processing, and poll `/videos/{job_id}/status` every 1s for live progress
+  (frames, events, status). Preview the annotated video when done.
+- **Stockroom camera** (`CAM_STOCKROOM_01`) auto-enables "treat all as staff"
+  and locks the checkbox, matching the backend's forced `all_staff` rule.
+- **Live Events** — select a recent job, view generated events with filters
+  (event type, camera, staff/customer).
+- **Analytics pages** auto-refresh every 2s while a job is running, 5s otherwise.
+- **Sidebar navigation + top status bar** with API health indicator and
+  processing status.
+
+### Video job manager (`app/video_jobs.py`)
+
+Wraps the existing `pipeline.detect.run_detection` in a background daemon thread
+so the React UI can upload → process → poll without blocking. Design:
+
+- **In-memory `JobStore`** (thread-safe dict). Job state is lost on API restart;
+  for production this swaps to SQLite/Redis via the same `JobStore` interface.
+- The worker calls `run_detection` with a `progress_cb` that streams
+  `frames_processed`, `events_emitted`, `frames_written` into the job record.
+- Generated events are captured from the output JSONL and served by
+  `GET /videos/{job_id}/events` for the Live Events page.
+- `POST /videos/{job_id}/process` forces `all_staff=True` when
+  `camera_id == "CAM_STOCKROOM_01"`, matching the CLI behaviour.
+
 ### The dashboard (`dashboard/terminal_dashboard.py`)
 
 Polls the API every 2s and renders unique visitors, conversion rate, queue
@@ -188,6 +224,30 @@ is now also grounded in the **real Brigade Road (Bangalore) store** data:
   is therefore a *computed* number grounded in the official POS file — never
   hardcoded — plus browsers and queue-abandoners for a realistic nested funnel.
 
+**Multi-camera / multi-angle handling.** The real store has **5 CCTV angles**
+(entry, two floor cams, billing, and a stockroom/back office). A single top-down
+polygon set cannot serve five perspectives, so the layout supports **per-camera
+zones**: each camera in `store_layout.json` carries its own polygons calibrated
+to *that* camera's frame, and `load_zone_map(store_id, layout, camera_id)` prefers
+them (falling back to store-level zones, then defaults). Classification uses the
+person's **feet point** (`cy = box_bottom / height`), which is far more stable
+under perspective than the box centroid. Two non-obvious cases are handled
+explicitly:
+- **Non-customer cameras.** The stockroom camera is marked `customer_facing:false`
+  and is run with `--all-staff`, so staff/stock movement never inflates visitor
+  counts. (Best practice: don't run analytics on it at all.)
+- **Staff behind the counter.** The billing camera declares a `type:"staff"` zone
+  (`BILLING_STAFF`); anyone classified there is flagged `is_staff=True`
+  automatically (via `ZoneMap.staff_zone_ids`), so the cashier isn't counted as a
+  shopper while customers on the queue side still register `BILLING`.
+
+Because there is **no cross-camera appearance Re-ID**, `visitor_id`s are
+namespaced by `camera_id` so two cameras can never emit the same id for different
+people. The consequence — the same shopper seen by two cameras is two visitors —
+is the honest behaviour without Re-ID; full cross-camera identity is listed as a
+next step. The calibrated polygons were derived from the provided reference
+frames and should be fine-tuned against the actual video resolution.
+
 **Why we did not retrain the detector.** Neither provided file contains *labelled
 image data* (no bounding boxes, no class labels, no video). They are business
 metadata (sales rows + a floor-plan picture), which improves analytics realism
@@ -205,6 +265,11 @@ approximations and should be calibrated against a real CCTV frame per camera.
 - **Staff classification is a placeholder** (no labelled data) — see decision 5.
 - **Re-entry / cross-camera Re-ID is trajectory-distance only** (no appearance
   embedding); it approximates rather than guarantees identity across long gaps.
+  `visitor_id`s are namespaced by `camera_id` to avoid false merges, so the same
+  person across two cameras is currently counted twice — true cross-camera
+  identity needs an appearance-embedding Re-ID model (next step). For a true
+  cross-camera funnel, feed analytics from a single camera covering the journey,
+  or add Re-ID.
 - **Conversion is time-window correlation**, not true identity matching, because
   POS has no `customer_id` — the spec's intended approach, but it can mis-credit
   a transaction when two customers are in billing within the same 5-min window.

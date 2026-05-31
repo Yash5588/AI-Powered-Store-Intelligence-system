@@ -42,6 +42,25 @@ def test_metrics_excludes_staff(client):
     assert body["unique_visitors"] == 1  # staff excluded
 
 
+def test_stockroom_camera_events_do_not_inflate_visitors(client):
+    """Events from a staff_only camera (all is_staff=true) never count as visitors.
+
+    Simulates the CAM_STOCKROOM_01 stream (every event flagged is_staff=true)
+    arriving alongside one real customer: unique_visitors must stay 1.
+    """
+    base = datetime(2026, 4, 10, 14, 0, tzinfo=timezone.utc)
+    stockroom = [
+        make_event(visitor_id=f"CAM_STOCKROOM_01_VIS_{i:06d}", event_type="ENTRY",
+                   is_staff=True, timestamp=_ts(base, seconds=i))
+        for i in range(5)
+    ]
+    customer = [make_event(visitor_id="CAM_ENTRY_01_VIS_000001", event_type="ENTRY",
+                           timestamp=_ts(base, seconds=30))]
+    ingest(client, stockroom + customer)
+    body = client.get("/stores/STORE_BLR_002/metrics").json()
+    assert body["unique_visitors"] == 1  # 5 stockroom staff excluded, 1 customer counted
+
+
 def test_metrics_zero_purchases_no_division_error(client):
     """Visitors present but no POS transactions -> conversion 0.0, no crash."""
     set_pos_csv(client, [])  # empty POS file

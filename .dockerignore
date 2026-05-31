@@ -23,6 +23,7 @@ videos/
 data/videos/
 data/clips/
 data/outputs/
+data/uploads/
 data/raw/
 data/official/
 *.mp4

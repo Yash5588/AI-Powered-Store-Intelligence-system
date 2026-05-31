@@ -63,6 +63,7 @@ class _VisitorState:
     in_billing: bool = False
     joined_queue: bool = False
     exited: bool = False
+    is_staff: bool = False  # sticky: once seen as staff, stays staff for this session
     history_zones: list[str] = field(default_factory=list)
 
 
@@ -127,6 +128,10 @@ class SessionStateMachine:
         t = base_time + timedelta(seconds=t_s)
         events: list[dict] = []
         is_staff = bool(self.is_staff_fn(zone=zone, visitor_id=visitor_id))
+        # Staff status is sticky per session: a visitor classified as staff in any
+        # frame stays staff for all their events, incl. the finalize() EXIT.
+        st.is_staff = st.is_staff or is_staff
+        is_staff = st.is_staff
 
         # ENTRY / REENTRY on first sight (or first sight in an entry zone).
         if not st.entered:
@@ -211,7 +216,9 @@ class SessionStateMachine:
         for st in self.states.values():
             if st.entered and not st.exited:
                 st.exited = True
-                events.append(self._event(st, "EXIT", t, zone_id=None, confidence=0.5))
+                events.append(
+                    self._event(st, "EXIT", t, zone_id=None, confidence=0.5, is_staff=st.is_staff)
+                )
         return events
 
 
@@ -245,7 +252,12 @@ def run_detection(
     conf_threshold: float = 0.10,
     staff_zones: Optional[set[str]] = None,
     annotated_video_path: Optional[str] = None,
+    latest_frame_path: Optional[str] = None,
     max_frames: Optional[int] = None,
+    all_staff: bool = False,
+    flush_every_frames: int = 25,
+    progress_cb=None,
+    visitor_prefix: Optional[str] = None,
 ) -> int:
     """Process a video file end-to-end and emit events. Returns event count.
 
@@ -274,14 +286,27 @@ def run_detection(
     base_time = clip_start_time(video_path)
 
     try:
-        zone_map = load_zone_map(store_id, layout_path)
-        sm = SessionStateMachine(
-            store_id, camera_id, zone_map, is_staff_fn=make_staff_classifier(staff_zones)
-        )
+        zone_map = load_zone_map(store_id, layout_path, camera_id=camera_id)
+        # Staff are excluded from visitor analytics. Sources, combined:
+        #   * --staff-zone CLI hints, * layout zones typed "staff" (e.g. behind
+        #   the billing counter), * --all-staff CLI flag, * a layout camera marked
+        #   staff_only:true (e.g. the stockroom). Any of these can force is_staff.
+        whole_camera_is_staff = bool(all_staff) or zone_map.staff_only
+        effective_staff_zones = set(staff_zones or set()) | zone_map.staff_zone_ids
+        if whole_camera_is_staff:
+            is_staff_fn = lambda **_: True  # noqa: E731 - non-customer camera
+        else:
+            is_staff_fn = make_staff_classifier(effective_staff_zones)
+        sm = SessionStateMachine(store_id, camera_id, zone_map, is_staff_fn=is_staff_fn)
+        if zone_map.staff_only:
+            print(
+                f"[detect] {camera_id} is staff_only -> all events flagged is_staff=true",
+                file=sys.stderr,
+            )
 
         sinks = [JsonlSink(output_path)]
         if post_url:
-            sinks.append(ApiSink(post_url))
+            sinks.append(ApiSink(post_url, batch_size=25))
         sink = MultiSink(sinks)
 
         cap = cv2.VideoCapture(video_path)
@@ -294,7 +319,7 @@ def run_detection(
 
         if annotated_video_path:
             Path(annotated_video_path).parent.mkdir(parents=True, exist_ok=True)
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            fourcc = cv2.VideoWriter_fourcc(*"vp80")
             writer = cv2.VideoWriter(
                 annotated_video_path, fourcc, fps, (int(width), int(height))
             )
@@ -306,7 +331,12 @@ def run_detection(
                 writer = None
 
         model = YOLO(model_name)
-        tracker = CentroidTracker()
+        # Namespace ids by camera so two cameras can't emit the SAME visitor_id
+        # for different people (ByteTrack/centroid ids restart per stream). There
+        # is no cross-camera appearance Re-ID, so each camera's ids are distinct
+        # by construction — documented in DESIGN.md.
+        prefix = visitor_prefix or f"{camera_id}_VIS_"
+        tracker = CentroidTracker(visitor_prefix=prefix)
         use_bytetrack = True
 
         try:
@@ -326,6 +356,7 @@ def run_detection(
                 )
                 boxes = results[0].boxes if results else None
                 if use_bytetrack and boxes is not None and boxes.id is not None:
+                    bt_prefix = prefix.replace("VIS_", "bt") if "_VIS_" in prefix else f"{camera_id}_bt"
                     for i in range(len(boxes)):
                         x1, y1, x2, y2 = boxes.xyxy[i].tolist()
                         conf = float(boxes.conf[i])
@@ -333,7 +364,7 @@ def run_detection(
                         cx = ((x1 + x2) / 2) / width
                         cy = y2 / height  # feet point -> more stable for floor zones
                         detections.append(
-                            (f"VIS_bt{tid:06d}", conf, cx, cy, False, (x1, y1, x2, y2))
+                            (f"{bt_prefix}{tid:06d}", conf, cx, cy, False, (x1, y1, x2, y2))
                         )
                 else:
                     centroids = []
@@ -364,19 +395,26 @@ def run_detection(
                     )
                     for ev in events:
                         sink.emit(ev)
-                    if writer is not None:
+                    if writer is not None or latest_frame_path:
                         frame_events.append(
                             (box, visitor_id, conf, zone.zone_id if zone else None,
                              [e["event_type"] for e in events])
                         )
 
-                if writer is not None:
+                if writer is not None or latest_frame_path:
                     annotated = _annotate_frame(
                         cv2, frame, zone_map, frame_events, int(width), int(height),
                         store_id, camera_id, t_s,
                     )
-                    writer.write(annotated)
-                    frames_written += 1
+                    if writer is not None:
+                        writer.write(annotated)
+                        frames_written += 1
+                    # Save latest annotated frame as JPEG for live preview
+                    if latest_frame_path and frame_index % flush_every_frames == 0:
+                        try:
+                            cv2.imwrite(latest_frame_path, annotated)
+                        except Exception:
+                            pass
 
                 frame_index += 1
                 if frame_index % 100 == 0:
@@ -384,6 +422,14 @@ def run_detection(
                         f"[detect] progress: frames={frame_index} "
                         f"events={sink.count} frames_written={frames_written}"
                     )
+                if frame_index % flush_every_frames == 0:
+                    if hasattr(sink, 'flush'):
+                        sink.flush()
+                    if progress_cb is not None:
+                        try:
+                            progress_cb(frame_index, sink.count, frames_written)
+                        except Exception:  # progress reporting must never break detection
+                            pass
                 if simulate_realtime:
                     time.sleep(1.0 / fps)
         except KeyboardInterrupt:
@@ -428,6 +474,7 @@ def _annotate_frame(cv2, frame, zone_map, frame_events, width, height, store_id,
         "threshold": (255, 180, 0),   # entry/exit — amber
         "billing": (0, 0, 255),       # billing — red
         "product": (0, 200, 0),       # product — green
+        "staff": (128, 128, 128),     # staff-only (e.g. stockroom) — grey
         "other": (200, 200, 200),
     }
     for zone in zone_map.zones:
@@ -490,6 +537,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Zone id(s) to treat as staff-only (placeholder heuristic).",
     )
     p.add_argument(
+        "--all-staff", action="store_true",
+        help="Treat EVERY person in this camera as staff (use for non-customer "
+             "cameras like the stockroom/back office so they don't inflate counts).",
+    )
+    p.add_argument(
         "--save-annotated-video", default=None,
         help="Optional path to write an annotated MP4 (boxes, ids, zones, event labels).",
     )
@@ -515,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
         staff_zones=set(args.staff_zone) if args.staff_zone else None,
         annotated_video_path=args.save_annotated_video,
         max_frames=args.max_frames,
+        all_staff=args.all_staff,
     )
     return 0 if count >= 0 else 1
 

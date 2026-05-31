@@ -8,10 +8,33 @@
       "city": "Bangalore",
       "timezone": "Asia/Kolkata",
       "open_hours": { "open": "11:00", "close": "22:00" },
+      "_camera_note": "5 real CCTV angles. Each camera carries its OWN zone polygons calibrated to THAT camera's frame (normalised, origin top-left, classified on the person's feet point). These were calibrated from the provided reference frames and should be fine-tuned against the actual video resolution. The store-level `zones` below are the top-down overview kept for backward compatibility.",
       "cameras": [
-        { "camera_id": "CAM_ENTRY_01", "role": "entry", "covers": ["ENTRY"] },
-        { "camera_id": "CAM_FLOOR_01", "role": "floor", "covers": ["SKINCARE", "MAKEUP", "FRAGRANCE", "HAIRCARE", "ACCESSORIES", "PMU"] },
-        { "camera_id": "CAM_BILLING_01", "role": "billing", "covers": ["BILLING"] }
+        { "camera_id": "CAM_ENTRY_01", "role": "entry", "customer_facing": true, "covers": ["ENTRY"],
+          "zones": [
+            { "zone_id": "ENTRY", "name": "Entry / Exit (glass door + mat)", "type": "threshold", "region": [[0.20, 0.45], [0.80, 0.45], [0.80, 1.00], [0.20, 1.00]] }
+          ] },
+        { "camera_id": "CAM_FLOOR_A_01", "role": "floor", "customer_facing": true, "covers": ["SKINCARE", "MAKEUP", "PMU"],
+          "zones": [
+            { "zone_id": "SKINCARE", "name": "Skincare back wall (aisle in front)", "type": "product", "skus": ["EB Korean", "The Face Shop", "Good Vibes", "DermDoc", "Minimalist", "Aqualogica", "Lakme Skin"], "dep_names": ["skin", "bath-and-body", "personal-care"], "region": [[0.02, 0.50], [0.60, 0.50], [0.60, 0.96], [0.02, 0.96]] },
+            { "zone_id": "MAKEUP", "name": "Centre makeup units / PMU stool", "type": "product", "skus": ["PMU", "Makeup Units"], "dep_names": ["makeup"], "region": [[0.60, 0.45], [0.95, 0.45], [0.95, 0.90], [0.60, 0.90]] }
+          ] },
+        { "camera_id": "CAM_FLOOR_B_01", "role": "floor", "customer_facing": true, "covers": ["MAKEUP", "HAIRCARE", "ACCESSORIES"],
+          "zones": [
+            { "zone_id": "ACCESSORIES", "name": "Accessories panel (far left)", "type": "product", "skus": ["Accessories"], "dep_names": [], "region": [[0.00, 0.52], [0.13, 0.52], [0.13, 0.96], [0.00, 0.96]] },
+            { "zone_id": "HAIRCARE", "name": "Haircare (Alps Goodness, Streax, L'Oreal)", "type": "product", "skus": ["Alps Goodness", "Streax", "L'Oreal"], "dep_names": ["hair"], "region": [[0.13, 0.52], [0.27, 0.52], [0.27, 0.96], [0.13, 0.96]] },
+            { "zone_id": "MAKEUP", "name": "Makeup front wall (Maybelline, Lakme, Faces Canada, Swiss Beauty)", "type": "product", "skus": ["Maybelline", "Faces Canada", "Lakme", "Swiss Beauty", "MARS"], "dep_names": ["makeup"], "region": [[0.27, 0.48], [0.98, 0.48], [0.98, 0.98], [0.27, 0.98]] }
+          ] },
+        { "camera_id": "CAM_BILLING_01", "role": "billing", "customer_facing": true, "covers": ["BILLING"],
+          "zones": [
+            { "zone_id": "BILLING", "name": "Cash counter (customer side / queue)", "type": "billing", "dep_names": [], "region": [[0.12, 0.12], [0.78, 0.12], [0.78, 0.55], [0.12, 0.55]] },
+            { "zone_id": "BILLING_STAFF", "name": "Behind the counter (staff only)", "type": "staff", "region": [[0.00, 0.45], [0.42, 0.45], [0.42, 1.00], [0.00, 1.00]] }
+          ] },
+        { "camera_id": "CAM_STOCKROOM_01", "role": "stockroom", "customer_facing": false, "staff_only": true, "covers": ["STOCKROOM"],
+          "_note": "Back office / storage — NOT a customer area. staff_only:true forces is_staff=true on every event, so it never affects visitor metrics/funnel/heatmap/conversion. A single full-frame STOCKROOM (staff) zone is drawn — never retail zones.",
+          "zones": [
+            { "zone_id": "STOCKROOM", "name": "Stockroom / back office", "type": "staff", "region": [[0.00, 0.00], [1.00, 0.00], [1.00, 1.00], [0.00, 1.00]] }
+          ] }
       ],
       "zones": [
         { "zone_id": "ENTRY", "name": "Entry / Exit (Glass front, door)", "type": "threshold", "dep_names": [], "region": [[0.00, 0.58], [0.14, 0.58], [0.14, 1.00], [0.00, 1.00]] },

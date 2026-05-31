@@ -184,3 +184,75 @@ rigour. Instead this data is used where it genuinely raises accuracy — **real
 zone geometry, real product categories, and a real, computed conversion rate**
 (via `--align-pos`). The event seam keeps a store-specific fine-tuned detector a
 drop-in upgrade if labelled frames are ever captured. (See DESIGN.md §5.)
+
+## Decision 6 — Per-camera zones for 5 different CCTV angles
+
+**Context.** The store's test footage comes from **5 cameras at very different
+angles**: entry (top-down on the door), two floor cams (skincare wall; makeup
+wall), the billing counter, and a stockroom/back office. A single normalised
+polygon set (my first cut, derived from the top-down floor plan) cannot line up
+with five perspectives — a shopper at the skincare wall has their feet mid-frame
+in the floor cam, nowhere near a top-band "SKINCARE" polygon.
+
+**Options considered**
+
+1. **One store-level polygon set for all cameras** — simplest, but wrong: zones
+   only align for one hypothetical viewpoint; every other camera mis-classifies.
+2. **Full homography per camera** (map each frame to a common floor plane) —
+   most accurate, but needs surveyed ground-control points I don't have, and is
+   heavy for the time budget.
+3. **Per-camera polygons calibrated in each camera's own frame** ✅ — the layout
+   lets every camera carry its own `zones`; `load_zone_map(store, layout,
+   camera_id)` prefers them, falling back to store zones then defaults.
+
+**What I chose and why.** **Option 3.** It's the right accuracy-per-effort point:
+each camera's zones are drawn directly on *its* frame (calibrated from the
+provided reference frames), classification runs on the **feet point** for
+perspective stability, and the change is backward-compatible (older single-view
+layouts still work). I also handled the two cases that would otherwise corrupt
+the headline metric:
+- the **stockroom** camera is `customer_facing:false` and run with `--all-staff`,
+  so back-office activity never inflates `unique_visitors`;
+- the **cashier** is excluded via a `type:"staff"` zone behind the counter
+  (`ZoneMap.staff_zone_ids`), while customers on the queue side still count.
+
+**What I explicitly did NOT do.** No cross-camera appearance Re-ID — so I
+namespace `visitor_id` by `camera_id` to prevent false merges (two cameras
+emitting the same id). The honest cost is that one shopper seen by two cameras
+counts twice; the fix (Re-ID) is documented as the next step. I'd add it the
+moment cross-camera identity materially changed the conversion number. The
+calibrated polygons are approximations from reference frames and should be
+fine-tuned against the real video resolution.
+
+## Decision 7 — React as a thin presentation layer, not an analytics engine
+
+**Context.** The challenge requires a dashboard. We already ship a Streamlit
+dashboard and a terminal dashboard, but neither supports a rich interactive
+workflow like video upload → live processing → event inspection in one UI.
+
+**Options considered**
+
+1. **Streamlit-only** — already built, quick, but limited interactivity (no
+   real-time polling, no file upload progress, no SPA navigation).
+2. **React (Vite)** — rich interactivity, proper SPA, but more code to write.
+3. **Next.js / full framework** — more than needed for a read-only dashboard.
+
+**What I chose and why.** **React (Vite) as a thin frontend layer.** Key design
+rules:
+
+- **Zero analytics computed in the browser.** Every metric, funnel stage, heatmap
+  cell, and anomaly is fetched from FastAPI. The React code is pure presentation.
+- **No hardcoded values.** If the API returns no data, pages show an empty state.
+  If the API is unreachable, pages show an error state. No fallback numbers.
+- **Video job lifecycle stays server-side.** The React Video Processing page
+  uploads a file, calls `/videos/{job_id}/process`, and polls
+  `/videos/{job_id}/status` every 1s. All detection logic runs in the FastAPI
+  backend thread — the browser just renders progress.
+- **Stockroom camera rule enforced on both sides.** The React UI auto-checks and
+  disables the "all staff" checkbox when `CAM_STOCKROOM_01` is selected, and the
+  backend independently forces `all_staff=True` for that camera. Defence in depth.
+
+**Documented limitation: in-memory video job state.** The `JobStore` is a
+process-local dict (thread-safe, but not persistent). Jobs are lost on restart.
+For production, the `JobStore` interface would swap to SQLite or Redis + a real
+task queue. This is an acceptable hackathon trade-off documented in DESIGN.md.

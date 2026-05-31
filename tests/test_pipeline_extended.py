@@ -155,6 +155,110 @@ def test_tracker_greedy_match_picks_nearest_detection():
     assert len(active) == 2
 
 
+def _write_layout(tmp_path, store) -> str:
+    p = tmp_path / "layout.json"
+    p.write_text(json.dumps({"stores": [store]}), encoding="utf-8")
+    return str(p)
+
+
+def test_camera_zones_override_store_zones(tmp_path):
+    """A camera with its own polygons is used instead of the store-level zones."""
+    store = {
+        "store_id": "ST1008",
+        "zones": [
+            {"zone_id": "MAKEUP", "type": "product", "region": [[0.4, 0.3], [0.66, 0.3], [0.66, 0.98], [0.4, 0.98]]}
+        ],
+        "cameras": [
+            {"camera_id": "CAM_ENTRY_01", "zones": [
+                {"zone_id": "ENTRY", "type": "threshold", "region": [[0.2, 0.45], [0.8, 0.45], [0.8, 1.0], [0.2, 1.0]]}
+            ]}
+        ],
+    }
+    lp = _write_layout(tmp_path, store)
+    cam = load_zone_map("ST1008", lp, camera_id="CAM_ENTRY_01")
+    assert [z.zone_id for z in cam.zones] == ["ENTRY"]
+    # A point at the doorway is ENTRY in this camera's calibrated frame.
+    assert cam.classify(0.5, 0.8).zone_id == "ENTRY"
+
+
+def test_matched_camera_with_empty_zones_stays_empty(tmp_path):
+    """A camera that exists in the layout owns its view: empty zones stay empty.
+
+    It must NOT inherit the store-level retail zones (that was the stockroom bug).
+    """
+    store = {
+        "store_id": "ST1008",
+        "zones": [
+            {"zone_id": "MAKEUP", "type": "product", "region": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]}
+        ],
+        "cameras": [{"camera_id": "CAM_FOO_01", "zones": []}],
+    }
+    lp = _write_layout(tmp_path, store)
+    cam = load_zone_map("ST1008", lp, camera_id="CAM_FOO_01")
+    assert cam.zones == []  # does NOT fall back to store retail zones
+
+
+def test_unknown_camera_uses_store_zones(tmp_path):
+    store = {
+        "store_id": "ST1008",
+        "zones": [{"zone_id": "MAKEUP", "type": "product", "region": [[0, 0], [1, 0], [1, 1], [0, 1]]}],
+        "cameras": [{"camera_id": "CAM_X", "zones": [{"zone_id": "ENTRY", "type": "threshold", "region": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}],
+    }
+    lp = _write_layout(tmp_path, store)
+    cam = load_zone_map("ST1008", lp, camera_id="CAM_NOT_THERE")
+    assert [z.zone_id for z in cam.zones] == ["MAKEUP"]
+
+
+def test_staff_only_camera_loads_only_its_zone(tmp_path):
+    """A staff_only camera (stockroom) loads ONLY its own zone, never retail.
+
+    Regression: previously an empty/own camera fell back to the store-level
+    retail zones, so the stockroom drew SKINCARE/MAKEUP/HAIRCARE/etc.
+    """
+    store = {
+        "store_id": "ST1008",
+        "zones": [
+            {"zone_id": "SKINCARE", "type": "product", "region": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+            {"zone_id": "MAKEUP", "type": "product", "region": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+        ],
+        "cameras": [
+            {"camera_id": "CAM_STOCKROOM_01", "staff_only": True, "zones": [
+                {"zone_id": "STOCKROOM", "type": "staff", "region": [[0, 0], [1, 0], [1, 1], [0, 1]]}
+            ]}
+        ],
+    }
+    lp = _write_layout(tmp_path, store)
+    zm = load_zone_map("ST1008", lp, camera_id="CAM_STOCKROOM_01")
+    assert zm.staff_only is True
+    assert [z.zone_id for z in zm.zones] == ["STOCKROOM"]
+    # None of the retail zones leaked in.
+    assert "SKINCARE" not in {z.zone_id for z in zm.zones}
+    assert "MAKEUP" not in {z.zone_id for z in zm.zones}
+
+
+def test_camera_with_empty_zones_does_not_fall_back_to_retail(tmp_path):
+    """A matched camera with an explicitly empty zone list stays empty (no retail)."""
+    store = {
+        "store_id": "ST1008",
+        "zones": [{"zone_id": "SKINCARE", "type": "product", "region": [[0, 0], [1, 0], [1, 1], [0, 1]]}],
+        "cameras": [{"camera_id": "CAM_STOCKROOM_01", "staff_only": True, "zones": []}],
+    }
+    lp = _write_layout(tmp_path, store)
+    zm = load_zone_map("ST1008", lp, camera_id="CAM_STOCKROOM_01")
+    assert zm.staff_only is True
+    assert zm.zones == []
+
+
+def test_staff_zone_ids_property():
+    zones = [
+        Zone("BILLING", "billing", [(0, 0), (1, 0), (1, 1), (0, 1)]),
+        Zone("BILLING_STAFF", "staff", [(0, 0), (0.4, 0), (0.4, 1), (0, 1)]),
+    ]
+    zm = ZoneMap("ST1008", zones)
+    assert zm.staff_zone_ids == {"BILLING_STAFF"}
+    assert zm.billing_zone_ids == {"BILLING"}
+
+
 def test_tracker_group_entry_distinct_ids():
     """Group entry: several people entering together each get a distinct id.
 

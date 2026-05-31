@@ -91,8 +91,11 @@ class JsonlSink:
         self._fh.write(json.dumps(event) + "\n")
         self.count += 1
 
-    def close(self) -> None:
+    def flush(self) -> None:
         self._fh.flush()
+
+    def close(self) -> None:
+        self.flush()
         self._fh.close()
 
 
@@ -118,9 +121,16 @@ class ApiSink:
         req = urlrequest.Request(
             self.url, data=data, headers={"Content-Type": "application/json"}, method="POST"
         )
-        with urlrequest.urlopen(req) as resp:  # noqa: S310 - local trusted URL
-            resp.read()
-        self._buf.clear()
+        try:
+            with urlrequest.urlopen(req) as resp:  # noqa: S310 - local trusted URL
+                resp.read()
+            self._buf.clear()
+        except Exception as e:
+            import sys
+            print(f"[ApiSink] WARN: flush failed: {e}", file=sys.stderr)
+            # Do not clear buffer on transient failure? Or clear it to avoid duplicate retries
+            # that might block forever. For simplicity, we clear it and rely on JSONL as ground truth.
+            self._buf.clear()
 
     def close(self) -> None:
         self.flush()
@@ -139,6 +149,11 @@ class MultiSink:
     def emit(self, event: dict) -> None:
         for s in self.sinks:
             s.emit(event)
+
+    def flush(self) -> None:
+        for s in self.sinks:
+            if hasattr(s, "flush"):
+                s.flush()
 
     def close(self) -> None:
         for s in self.sinks:

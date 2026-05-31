@@ -8,6 +8,7 @@ services:
       # SQLite file lives on a named volume so events survive restarts.
       DATABASE_URL: "sqlite:////data/store_intelligence.db"
       STALE_FEED_THRESHOLD_SECONDS: "600"
+      CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000,http://localhost:5173,http://127.0.0.1:5173"
     volumes:
       - si_data:/data
     restart: unless-stopped
@@ -17,6 +18,15 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  frontend:
+    build: ./frontend
+    container_name: store-intelligence-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
 
   dashboard:
     build: .

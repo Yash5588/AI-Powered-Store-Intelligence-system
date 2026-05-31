@@ -15,7 +15,9 @@ store_intelligence.db
 # Videos / datasets / outputs
 data/clips/
 data/outputs/
+data/uploads/
 *.mp4
+*.webm
 *.avi
 *.mov
 *.mkv

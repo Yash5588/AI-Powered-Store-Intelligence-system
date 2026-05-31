@@ -21,9 +21,9 @@ from datetime import datetime, timezone
 import pytest
 
 from app.models import Event
-from pipeline.detect import SessionStateMachine
+from pipeline.detect import SessionStateMachine, make_staff_classifier
 from pipeline.tracker import CentroidTracker
-from pipeline.zones import ZoneMap, load_zone_map
+from pipeline.zones import Zone, ZoneMap, load_zone_map
 
 
 def _assert_schema(events):
@@ -99,6 +99,40 @@ def test_tracker_reentry_reuses_visitor_id():
 def _sm():
     zm = load_zone_map("STORE_BLR_002")
     return SessionStateMachine("STORE_BLR_002", "CAM_FLOOR_01", zm)
+
+
+def test_staff_zone_flags_is_staff():
+    """A person in a layout-declared staff zone is flagged is_staff=True.
+
+    Mirrors run_detection's composition: staff classifier is built from the
+    zone map's staff_zone_ids (e.g. behind the billing counter), so staff are
+    excluded from visitor analytics by the API.
+    """
+    zones = [
+        Zone("BILLING", "billing", [(0.1, 0.1), (0.8, 0.1), (0.8, 0.55), (0.1, 0.55)]),
+        Zone("BILLING_STAFF", "staff", [(0.0, 0.45), (0.42, 0.45), (0.42, 1.0), (0.0, 1.0)]),
+    ]
+    zm = ZoneMap("ST1008", zones)
+    sm = SessionStateMachine(
+        "ST1008", "CAM_BILLING_01", zm,
+        is_staff_fn=make_staff_classifier(zm.staff_zone_ids),
+    )
+    base = datetime(2026, 4, 10, 14, 0, tzinfo=timezone.utc)
+    events = sm.observe("CAM_BILLING_01_VIS_000001", "BILLING_STAFF", "staff", None, 0.9, 0.0, base)
+    assert events, "expected at least an ENTRY event"
+    assert all(e["is_staff"] is True for e in events)
+
+
+def test_all_staff_classifier_flags_everyone():
+    """The --all-staff path (stockroom camera) marks every person as staff."""
+    zm = load_zone_map("STORE_BLR_002")
+    sm = SessionStateMachine(
+        "STORE_BLR_002", "CAM_STOCKROOM_01", zm, is_staff_fn=lambda **_: True
+    )
+    base = datetime(2026, 4, 10, 14, 0, tzinfo=timezone.utc)
+    events = sm.observe("CAM_STOCKROOM_01_VIS_000001", "MAKEUP", "product", "LIPSTICK", 0.9, 0.0, base)
+    assert events
+    assert all(e["is_staff"] is True for e in events)
 
 
 def test_entry_then_zone_enter_events():

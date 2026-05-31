@@ -74,11 +74,16 @@ def _point_in_polygon(x: float, y: float, polygon: list[tuple[float, float]]) ->
 
 
 class ZoneMap:
-    """Loaded zones for one store, with default-region fallback."""
+    """Loaded zones for one store/camera, with default-region fallback.
 
-    def __init__(self, store_id: str, zones: list[Zone]):
+    ``staff_only`` marks a non-customer camera (e.g. the stockroom): every person
+    it sees is staff, so it must never contribute to visitor analytics.
+    """
+
+    def __init__(self, store_id: str, zones: list[Zone], staff_only: bool = False):
         self.store_id = store_id
         self.zones = zones
+        self.staff_only = staff_only
 
     @property
     def billing_zone_ids(self) -> set[str]:
@@ -87,6 +92,16 @@ class ZoneMap:
     @property
     def entry_zone_ids(self) -> set[str]:
         return {z.zone_id for z in self.zones if z.zone_type == "threshold"}
+
+    @property
+    def staff_zone_ids(self) -> set[str]:
+        """Zones the layout marks as staff-only (e.g. behind the billing counter).
+
+        Anyone classified into one of these is flagged ``is_staff=True`` so they
+        never count as a visitor. This lets the layout declare staff areas
+        per-camera without a CLI flag or a fabricated appearance classifier.
+        """
+        return {z.zone_id for z in self.zones if z.zone_type == "staff"}
 
     def classify(self, nx: float, ny: float) -> Optional[Zone]:
         """Return the first zone whose polygon contains the normalised point."""
@@ -136,8 +151,26 @@ def _default_zone_map(store_id: str) -> ZoneMap:
     return ZoneMap(store_id, zones)
 
 
-def load_zone_map(store_id: str, layout_path: str | None = None) -> ZoneMap:
-    """Load the zone map for a store, with graceful fallbacks at every step."""
+def _camera_entry(store: dict, camera_id: str | None) -> dict | None:
+    if not camera_id:
+        return None
+    for cam in store.get("cameras", []):
+        if cam.get("camera_id") == camera_id:
+            return cam
+    return None
+
+
+def load_zone_map(
+    store_id: str, layout_path: str | None = None, camera_id: str | None = None
+) -> ZoneMap:
+    """Load the zone map for a store/camera, with graceful fallbacks at every step.
+
+    Camera angles differ, so a single top-down polygon set cannot serve every
+    view. When ``camera_id`` is given and that camera defines its own ``zones``
+    (polygons calibrated to *that* camera's frame), those are used. Otherwise we
+    fall back to the store-level zones, then to default regions — so older
+    layouts and unknown cameras still work.
+    """
     path = _resolve_layout_path(layout_path)
     if path is None:
         return _default_zone_map(store_id)
@@ -149,6 +182,16 @@ def load_zone_map(store_id: str, layout_path: str | None = None) -> ZoneMap:
 
     for store in layout.get("stores", []):
         if store.get("store_id") == store_id:
+            cam = _camera_entry(store, camera_id)
+            if cam is not None:
+                # A matched camera owns its own view. We use ITS zones only and
+                # NEVER fall back to the store-level retail zones — otherwise a
+                # non-retail camera (e.g. stockroom) would draw/classify SKINCARE,
+                # MAKEUP, etc., which is wrong. An empty zone list is respected.
+                staff_only = bool(cam.get("staff_only", False))
+                cam_zones = _zones_from_store(cam)
+                return ZoneMap(store_id, cam_zones, staff_only=staff_only)
+            # No specific camera (or camera_id not in layout) -> store-level zones.
             zones = _zones_from_store(store)
             if zones:
                 return ZoneMap(store_id, zones)
