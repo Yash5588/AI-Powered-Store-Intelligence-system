@@ -414,7 +414,7 @@ def run_detection(
                         try:
                             cv2.imwrite(latest_frame_path, annotated)
                         except Exception:
-                            pass
+                            pass  # nosec B110
 
                 frame_index += 1
                 if frame_index % 100 == 0:
@@ -428,7 +428,7 @@ def run_detection(
                     if progress_cb is not None:
                         try:
                             progress_cb(frame_index, sink.count, frames_written)
-                        except Exception:  # progress reporting must never break detection
+                        except Exception:  # nosec B110 - progress reporting must never break detection
                             pass
                 if simulate_realtime:
                     time.sleep(1.0 / fps)

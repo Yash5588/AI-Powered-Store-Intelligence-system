@@ -122,7 +122,7 @@ class ApiSink:
             self.url, data=data, headers={"Content-Type": "application/json"}, method="POST"
         )
         try:
-            with urlrequest.urlopen(req) as resp:  # noqa: S310 - local trusted URL
+            with urlrequest.urlopen(req) as resp:  # noqa: S310 # nosec B310 - local trusted URL
                 resp.read()
             self._buf.clear()
         except Exception as e:

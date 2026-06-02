@@ -377,7 +377,7 @@ def post_events(events: list[dict], base_url: str, batch_size: int = 500) -> Non
         req = urllib.request.Request(
             url, data=data, headers={"Content-Type": "application/json"}, method="POST"
         )
-        with urllib.request.urlopen(req) as resp:  # noqa: S310 - local trusted URL
+        with urllib.request.urlopen(req) as resp:  # noqa: S310 # nosec B310 - local trusted URL
             body = json.loads(resp.read().decode("utf-8"))
             print(f"  batch {i // batch_size + 1}: {body['accepted']} accepted, "
                   f"{body['duplicates']} dup, {body['rejected']} rejected")

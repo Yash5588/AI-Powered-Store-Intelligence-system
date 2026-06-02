@@ -52,7 +52,7 @@ def post_batch(url: str, batch: list[dict]) -> dict:
         method="POST",
     )
     try:
-        with request.urlopen(req) as resp:  # noqa: S310 - trusted local URL
+        with request.urlopen(req) as resp:  # noqa: S310 # nosec B310 - trusted local URL
             return json.loads(resp.read().decode("utf-8"))
     except error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

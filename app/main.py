@@ -290,7 +290,7 @@ async def clear_events() -> JSONResponse:
         video_jobs.store._jobs.clear()
         video_jobs.store._events.clear()
     except Exception:
-        pass  # non-critical; events table is the source of truth
+        pass  # nosec B110 - non-critical; events table is the source of truth
 
     return JSONResponse(
         status_code=200,
