@@ -1,6 +1,5 @@
-# Slim image for the Intelligence API (Phase 1).
-# The detection pipeline (OpenCV/YOLO) runs separately and is intentionally not
-# baked into this image to keep `docker compose up` fast and small.
+# Image for the Intelligence API plus optional CCTV processing.
+# The UI can launch detection jobs, so the container needs the CV pipeline deps.
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -9,11 +8,20 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install deps first for better layer caching.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libglib2.0-0 \
+        libgl1 \
+        libsm6 \
+        libxext6 \
+        libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# App + dashboard + pipeline code (dashboard/pipeline are light, no CV deps).
+# Install deps first for better layer caching.
+COPY requirements.txt requirements-pipeline.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-pipeline.txt
+
+# App + dashboard + pipeline code.
 COPY app/ ./app/
 COPY dashboard/ ./dashboard/
 COPY pipeline/ ./pipeline/
