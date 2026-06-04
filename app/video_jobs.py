@@ -58,6 +58,8 @@ class VideoJob:
     output_jsonl_path: Optional[str] = None
     annotated_video_path: Optional[str] = None
     latest_frame_path: Optional[str] = None
+    model_name: str = "yolov8n.pt"
+    conf_threshold: float = 0.25
     error: Optional[str] = None
     last_flush_at: Optional[str] = None
     created_at: str = field(default_factory=_utcnow)
@@ -66,8 +68,15 @@ class VideoJob:
     def public(self) -> dict:
         d = asdict(self)
         # Don't leak absolute filesystem paths to the browser; expose booleans.
+        d.pop("video_path", None)
+        d.pop("output_jsonl_path", None)
+        d.pop("annotated_video_path", None)
+        d.pop("latest_frame_path", None)
         d["has_annotated_video"] = bool(
             self.annotated_video_path and Path(self.annotated_video_path).exists()
+        )
+        d["has_latest_frame"] = bool(
+            self.latest_frame_path and Path(self.latest_frame_path).exists()
         )
         return d
 
@@ -120,6 +129,73 @@ class JobStore:
 
 # Module-level singleton store.
 store = JobStore()
+_restored_from_disk = False
+
+
+def restore_jobs_from_disk() -> int:
+    """Rebuild minimal job state from upload/output files after an API restart."""
+    global _restored_from_disk
+    restored = 0
+    if _restored_from_disk:
+        return restored
+    _restored_from_disk = True
+    if not UPLOAD_DIR.exists():
+        return restored
+
+    for upload in sorted(UPLOAD_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not upload.is_file() or "_" not in upload.name:
+            continue
+        job_id, filename = upload.name.split("_", 1)
+        if len(job_id) != 12 or not all(c in "0123456789abcdef" for c in job_id):
+            continue
+        if store.get(job_id) is not None:
+            continue
+
+        jsonl_path = JOB_OUTPUT_DIR / f"{job_id}_events.jsonl"
+        annotated_path = JOB_OUTPUT_DIR / f"{job_id}_annotated.webm"
+        latest_frame_path = JOB_OUTPUT_DIR / f"{job_id}_latest_frame.jpg"
+        first_event = _first_event(jsonl_path)
+        has_output = jsonl_path.exists() or annotated_path.exists()
+        job = VideoJob(
+            job_id=job_id,
+            filename=filename,
+            video_path=str(upload),
+            status="completed" if has_output else "failed",
+            store_id=first_event.get("store_id") if first_event else None,
+            camera_id=first_event.get("camera_id") if first_event else None,
+            output_jsonl_path=str(jsonl_path) if jsonl_path.exists() else None,
+            annotated_video_path=str(annotated_path) if annotated_path.exists() else None,
+            latest_frame_path=str(latest_frame_path) if latest_frame_path.exists() else None,
+            events_emitted=_count_jsonl_lines(jsonl_path),
+            error=None if has_output else "API restarted before this upload was processed. Start a new run.",
+        )
+        with store._lock:
+            store._jobs[job_id] = job
+            store._events[job_id] = []
+        if jsonl_path.exists():
+            _load_recent_events(job_id, str(jsonl_path))
+        restored += 1
+    return restored
+
+
+def _first_event(path: Path) -> Optional[dict]:
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            return event if isinstance(event, dict) else None
+    return None
+
+
+def _count_jsonl_lines(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open(encoding="utf-8") as fh:
+        return sum(1 for line in fh if line.strip())
 
 
 def save_upload(filename: str, data: bytes) -> VideoJob:
@@ -150,6 +226,8 @@ def start_processing(
     max_frames: Optional[int] = 300,
     save_annotated_video: bool = False,
     all_staff: bool = False,
+    model_name: str = "yolov8n.pt",
+    conf_threshold: float = 0.25,
 ) -> bool:
     """Launch detection for a job in a background daemon thread. Returns started."""
     job = store.get(job_id)
@@ -173,6 +251,8 @@ def start_processing(
         output_jsonl_path=jsonl_path,
         annotated_video_path=annotated_path,
         latest_frame_path=frame_preview_path,
+        model_name=model_name,
+        conf_threshold=conf_threshold,
         error=None,
         frames_processed=0,
         frames_written=0,
@@ -194,6 +274,8 @@ def start_processing(
             latest_frame_path=frame_preview_path,
             max_frames=max_frames,
             all_staff=all_staff,
+            model_name=model_name,
+            conf_threshold=conf_threshold,
         ),
         daemon=True,
     )
@@ -213,6 +295,8 @@ def _run_job(
     latest_frame_path: Optional[str],
     max_frames: Optional[int],
     all_staff: bool,
+    model_name: str,
+    conf_threshold: float,
 ) -> None:
     """Worker body: reuse run_detection, stream progress into the job store."""
     from pipeline.detect import run_detection  # lazy: pulls in CV wheels
@@ -240,6 +324,8 @@ def _run_job(
             latest_frame_path=latest_frame_path,
             max_frames=max_frames,
             all_staff=all_staff,
+            model_name=model_name,
+            conf_threshold=conf_threshold,
             progress_cb=_progress,
             visitor_prefix=f"{camera_id}_v{job_id[:4]}_VIS_",
         )

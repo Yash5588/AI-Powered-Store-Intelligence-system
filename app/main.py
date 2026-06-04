@@ -17,6 +17,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -55,7 +56,12 @@ logger = configure_logging()
 async def lifespan(app: FastAPI):
     """Create tables on startup."""
     init_db()
+    from app import video_jobs
+
+    restored_jobs = video_jobs.restore_jobs_from_disk()
     logger.info("startup", extra={"event": "startup", "version": __version__})
+    if restored_jobs:
+        logger.info("video_jobs_restored", extra={"event": "video_jobs_restored", "count": restored_jobs})
     yield
     logger.info("shutdown", extra={"event": "shutdown"})
 
@@ -308,6 +314,10 @@ class ProcessRequest(BaseModel):
     max_frames: int | None = Field(default=300)
     save_annotated_video: bool = Field(default=False)
     all_staff: bool = Field(default=False)
+    model: Literal["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolo11s.pt", "yolo11m.pt"] = Field(
+        default="yolov8n.pt"
+    )
+    conf: float = Field(default=0.25, ge=0.05, le=0.9)
 
 
 @app.post("/videos/upload")
@@ -346,6 +356,8 @@ async def process_video(job_id: str, body: ProcessRequest) -> JSONResponse:
         max_frames=body.max_frames,
         save_annotated_video=body.save_annotated_video,
         all_staff=all_staff,
+        model_name=body.model,
+        conf_threshold=body.conf,
     )
     if not started:
         return JSONResponse(

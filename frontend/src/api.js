@@ -24,10 +24,10 @@ async function safe(promise) {
 
 export const api = {
   health: () => safe(client.get("/health")),
-  metrics: (storeId) => safe(client.get(`/stores/${storeId}/metrics`)),
-  funnel: (storeId) => safe(client.get(`/stores/${storeId}/funnel`)),
-  heatmap: (storeId) => safe(client.get(`/stores/${storeId}/heatmap`)),
-  anomalies: (storeId) => safe(client.get(`/stores/${storeId}/anomalies`)),
+  metrics: (storeId) => safe(client.get(`/stores/${storeId}/metrics`, { timeout: 60000 })),
+  funnel: (storeId) => safe(client.get(`/stores/${storeId}/funnel`, { timeout: 60000 })),
+  heatmap: (storeId) => safe(client.get(`/stores/${storeId}/heatmap`, { timeout: 60000 })),
+  anomalies: (storeId) => safe(client.get(`/stores/${storeId}/anomalies`, { timeout: 60000 })),
 
   listVideos: () => safe(client.get("/videos")),
   uploadVideo: (file) => {

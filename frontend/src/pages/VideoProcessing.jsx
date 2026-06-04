@@ -6,10 +6,20 @@ import Funnel from "./Funnel";
 import Heatmap from "./Heatmap";
 import Anomalies from "./Anomalies";
 
+const DETECTOR_MODELS = [
+  { value: "yolov8n.pt", label: "yolov8n.pt - Fast" },
+  { value: "yolov8s.pt", label: "yolov8s.pt - Balanced" },
+  { value: "yolov8m.pt", label: "yolov8m.pt - Accurate" },
+  { value: "yolo11s.pt", label: "yolo11s.pt - Balanced newer" },
+  { value: "yolo11m.pt", label: "yolo11m.pt - Accurate newer" },
+];
+
 export default function VideoProcessing({ storeId, setStoreId }) {
   const [file, setFile] = useState(null);
   const [camera, setCamera] = useState("CAM_FLOOR_A_01");
   const [maxFrames, setMaxFrames] = useState(300);
+  const [model, setModel] = useState("yolov8n.pt");
+  const [confidence, setConfidence] = useState(0.25);
   const [saveAnnotated, setSaveAnnotated] = useState(true);
   const [allStaff, setAllStaff] = useState(false);
 
@@ -19,6 +29,14 @@ export default function VideoProcessing({ storeId, setStoreId }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef(null);
+
+  function clearMissingJob(message) {
+    stopPolling();
+    setJobId(null);
+    setJob(null);
+    setEvents([]);
+    setError(message);
+  }
 
   // Stockroom is never a customer area: auto-enable all_staff and lock it.
   const stockroom = camera === "CAM_STOCKROOM_01";
@@ -59,8 +77,12 @@ export default function VideoProcessing({ storeId, setStoreId }) {
   }, []);
 
   async function pollStatus(id) {
-    const { data, error } = await api.videoStatus(id);
+    const { data, error, status } = await api.videoStatus(id);
     if (error) {
+      if (status === 404) {
+        clearMissingJob(error);
+        return;
+      }
       setError(error);
       return;
     }
@@ -96,11 +118,17 @@ export default function VideoProcessing({ storeId, setStoreId }) {
       camera_id: camera,
       layout_path: "data/store_layout.json",
       max_frames: Number(maxFrames) || null,
+      model,
+      conf: Number(confidence),
       save_annotated_video: saveAnnotated,
       all_staff: allStaff || stockroom,
     });
     setBusy(false);
     if (proc.error) {
+      if (proc.status === 404) {
+        clearMissingJob(proc.error);
+        return;
+      }
       setError(`Could not start processing: ${proc.error}`);
       return;
     }
@@ -142,6 +170,25 @@ export default function VideoProcessing({ storeId, setStoreId }) {
               min="1"
               value={maxFrames}
               onChange={(e) => setMaxFrames(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label>Detector model</label>
+            <select value={model} onChange={(e) => setModel(e.target.value)}>
+              {DETECTOR_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Confidence threshold</label>
+            <input
+              type="number"
+              min="0.05"
+              max="0.9"
+              step="0.05"
+              value={confidence}
+              onChange={(e) => setConfidence(e.target.value)}
             />
           </div>
         </div>
@@ -203,7 +250,7 @@ export default function VideoProcessing({ storeId, setStoreId }) {
                 <h3 style={{ margin: 0 }}>Live Detection Output</h3>
                 {isRunning && <span className="pill warn" style={{ fontSize: "11px" }}>LIVE</span>}
               </div>
-              {isRunning ? (
+              {isRunning && job.has_latest_frame ? (
                 <LiveFramePreview jobId={jobId} />
               ) : job.status === "completed" && job.has_annotated_video ? (
                 <video

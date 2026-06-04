@@ -1,27 +1,13 @@
-import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { ErrorBox, Loading, Empty } from "../components/Common";
+import { usePollingResource } from "../hooks/usePollingResource";
 
 export default function Anomalies({ storeId, processing }) {
-  const [a, setA] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  async function load() {
-    const { data, error } = await api.anomalies(storeId);
-    if (error) setError(error);
-    else {
-      setA(data);
-      setError(null);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, processing ? 2000 : 5000);
-    return () => clearInterval(t);
-  }, [storeId, processing]);
+  const { data: a, error, loading } = usePollingResource(
+    () => api.anomalies(storeId),
+    [storeId, processing],
+    processing ? 3000 : 5000
+  );
 
   if (loading) return <Loading />;
   if (error) return <ErrorBox message={error} />;

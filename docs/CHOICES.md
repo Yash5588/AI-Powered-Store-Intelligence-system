@@ -30,6 +30,21 @@ defend. I keep YOLO confidence on **every** emitted event and do **not** suppres
 low-confidence detections (I run YOLO at a low `conf=0.10` and flag rather than
 drop), matching the "confidence calibration" criterion.
 
+**Detector configurability.** The default remains `yolov8n.pt` because it is the
+fastest practical demo model, but the React Video Processing page and
+`POST /videos/{job_id}/process` now accept `model` and `conf`. Supported UI
+choices are `yolov8n.pt` (Fast), `yolov8s.pt` (Balanced), `yolov8m.pt`
+(Accurate), `yolo11s.pt` (Balanced newer), and `yolo11m.pt` (Accurate newer).
+The default UI/API confidence threshold is `0.25` and valid values are `0.05` to
+`0.9`. The CLI keeps the same surface:
+`python -m pipeline.detect --model yolov8s.pt --conf 0.25 ...`.
+
+Stronger YOLO models usually improve person detection in crowded or occluded
+footage, but they are slower and may reduce throughput on CPU-only machines.
+Frigate, ONNX Runtime, and TensorRT are good future production detector backend
+options behind the same event contract; they are documented here only and are
+not dependencies of the current repo.
+
 I **overrode** both AI add-ons:
 - **No per-frame VLM for staff.** Cost/latency aside, with no labelled staff data
   any classifier is unverifiable. `is_staff` defaults to `false` with a
@@ -223,6 +238,10 @@ counts twice; the fix (Re-ID) is documented as the next step. I'd add it the
 moment cross-camera identity materially changed the conversion number. The
 calibrated polygons are approximations from reference frames and should be
 fine-tuned against the real video resolution.
+
+Store sections are **not detected by AI**. The detector emits person positions;
+zone assignment is a deterministic lookup against the camera-calibrated polygons
+in `data/store_layout.json`.
 
 ## Decision 7 — React as a thin presentation layer, not an analytics engine
 

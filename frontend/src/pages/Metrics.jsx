@@ -1,27 +1,13 @@
-import React, { useEffect, useState } from "react";
 import { api } from "../api";
 import { Card, ErrorBox, Loading } from "../components/Common";
+import { usePollingResource } from "../hooks/usePollingResource";
 
 export default function Metrics({ storeId, processing }) {
-  const [m, setM] = useState(null);
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  async function load() {
-    const { data, error } = await api.metrics(storeId);
-    if (error) setError(error);
-    else {
-      setM(data);
-      setError(null);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, processing ? 2000 : 5000);
-    return () => clearInterval(t);
-  }, [storeId, processing]);
+  const { data: m, error, loading } = usePollingResource(
+    () => api.metrics(storeId),
+    [storeId, processing],
+    processing ? 3000 : 5000
+  );
 
   if (loading) return <Loading />;
   if (error) return <ErrorBox message={error} />;

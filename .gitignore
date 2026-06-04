@@ -25,6 +25,8 @@ data/uploads/
 
 # Generated files
 data/generated_events.jsonl
+logs/
+submission_build/
 
 # NOTE: data/pos_transactions.csv is the DE-IDENTIFIED real Brigade POS export
 # (all customer + employee personal fields stripped — see scripts/deidentify note
@@ -33,6 +35,7 @@ data/generated_events.jsonl
 
 # Model weights
 *.pt
+yolo*.pt
 *.onnx
 *.engine
 

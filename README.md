@@ -29,7 +29,8 @@ docker compose up --build
 # 3. Upload a CCTV clip (.mp4, .avi, .mov, .mkv, .webm).
 # 4. Select the camera (CAM_ENTRY_01, CAM_FLOOR_A_01, CAM_FLOOR_B_01,
 #    CAM_BILLING_01, or CAM_STOCKROOM_01 for staff-only footage).
-# 5. Set Store ID (default: ST1008), max frames, annotated video toggle.
+# 5. Set Store ID (default: ST1008), max frames, detector model,
+#    confidence threshold, and annotated video toggle.
 #    Stockroom camera auto-enables "all staff" — no customer analytics.
 # 6. Click "Start processing". Watch live progress (frames, events, status).
 # 7. When complete, preview the annotated video inline.
@@ -45,6 +46,7 @@ pip install -r requirements-pipeline.txt
 python -m pipeline.detect --video "data/clips/CAM 1.mp4" \
   --store-id ST1008 --camera-id CAM_FLOOR_A_01 \
   --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8n.pt --conf 0.25 \
   --save-annotated-video data/outputs/annotated.mp4 --max-frames 300 \
   --post http://localhost:8000
 
@@ -57,7 +59,7 @@ cd frontend && npm install && npm run build
 
 > **No CCTV videos, model weights, generated outputs, or database files are
 > committed to this repository.** The `.gitignore` blocks `*.mp4`, `*.pt`,
-> `*.db`, `data/clips/`, `data/outputs/`, `data/uploads/`, and
+> `yolo*.pt`, `*.db`, `data/clips/`, `data/outputs/`, `data/uploads/`, and
 > `generated_events.jsonl`. Uploaded videos remain local in `data/uploads/`.
 > The committed POS file is **de-identified** (no customer names/phones).
 
@@ -108,9 +110,33 @@ files into `data/` required **zero changes to any caller**. Later official files
 
 > **Why no model retraining?** The provided files are business metadata (sales
 > rows + a floor-plan image), not labelled camera frames, so they can't train a
-> person detector. We keep pretrained **YOLOv8** and use this data where it
-> genuinely helps: real zones, real product categories, and a real *computed*
-> conversion rate. See `docs/CHOICES.md` Decision 5.
+> person detector. We keep a pretrained YOLO person detector (default
+> `yolov8n.pt` for speed; selectable from the UI/API/CLI) and use this data where
+> it genuinely helps: real camera-calibrated zones, real product categories, and
+> a real *computed* conversion rate. See `docs/CHOICES.md` Decision 5.
+
+### Detection configuration
+
+People detection is configurable without changing the analytics contract:
+
+| Model | UI label | Trade-off |
+|-------|----------|-----------|
+| `yolov8n.pt` | Fast | Default, fastest local demo path |
+| `yolov8s.pt` | Balanced | Stronger person detection, slower than nano |
+| `yolov8m.pt` | Accurate | Better detections on harder footage, slower |
+| `yolo11s.pt` | Balanced newer | Newer YOLO family, balanced speed/accuracy |
+| `yolo11m.pt` | Accurate newer | Newer YOLO family, stronger but slower |
+
+The React Video Processing page sends `model` and `conf` to
+`POST /videos/{id}/process`; the backend forwards them to the existing
+`pipeline.detect.run_detection(model_name=..., conf_threshold=...)`. The default
+confidence threshold is `0.25`, with UI/API validation from `0.05` to `0.9`.
+
+Store sections are **not detected by AI**. The detector finds people; their
+positions are mapped into camera-calibrated zones from `data/store_layout.json`.
+Future production deployments could swap the detector backend behind the same
+event contract, for example Frigate, ONNX Runtime, or TensorRT. Those are
+documented options only; they are not dependencies of this project.
 
 ## API endpoints
 
@@ -147,33 +173,39 @@ pip install -r requirements-pipeline.txt
 # Entry camera (threshold / door):
 python -m pipeline.detect --video "data/clips/entry.mp4" \
   --store-id ST1008 --camera-id CAM_ENTRY_01 \
-  --layout data/store_layout.json --output data/generated_events.jsonl --post http://localhost:8000
+  --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8n.pt --conf 0.25 --post http://localhost:8000
 
 # Floor camera A (skincare back wall + centre makeup units):
 python -m pipeline.detect --video "data/clips/floor_a.mp4" \
   --store-id ST1008 --camera-id CAM_FLOOR_A_01 \
-  --layout data/store_layout.json --output data/generated_events.jsonl --post http://localhost:8000
+  --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8s.pt --conf 0.25 --post http://localhost:8000
 
 # Floor camera B (makeup / haircare / accessories front wall):
 python -m pipeline.detect --video "data/clips/floor_b.mp4" \
   --store-id ST1008 --camera-id CAM_FLOOR_B_01 \
-  --layout data/store_layout.json --output data/generated_events.jsonl --post http://localhost:8000
+  --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8m.pt --conf 0.25 --post http://localhost:8000
 
 # Billing camera (cashier behind the counter is auto-excluded via the staff zone):
 python -m pipeline.detect --video "data/clips/billing.mp4" \
   --store-id ST1008 --camera-id CAM_BILLING_01 \
-  --layout data/store_layout.json --output data/generated_events.jsonl --post http://localhost:8000
+  --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8s.pt --conf 0.25 --post http://localhost:8000
 
 # Stockroom / back office — NON-customer area: --all-staff so it never inflates counts
 # (or simply don't run it):
 python -m pipeline.detect --video "data/clips/stockroom.mp4" \
   --store-id ST1008 --camera-id CAM_STOCKROOM_01 --all-staff \
-  --layout data/store_layout.json --output data/generated_events.jsonl --post http://localhost:8000
+  --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8n.pt --conf 0.25 --post http://localhost:8000
 
 # Visually verify a camera's zones line up (boxes, IDs, zone polygons, event labels):
 python -m pipeline.detect --video "data/clips/floor_a.mp4" \
   --store-id ST1008 --camera-id CAM_FLOOR_A_01 \
   --layout data/store_layout.json --output data/generated_events.jsonl \
+  --model yolov8s.pt --conf 0.25 \
   --save-annotated-video data/outputs/annotated_floor_a.mp4 --max-frames 300
 
 # --- Ingest an existing JSONL file in batches ---
@@ -210,6 +242,10 @@ tests/      pytest suite
 - Heavy CV wheels (OpenCV, Ultralytics/torch) live in `requirements-pipeline.txt`
   so the API image stays slim — install them only to run detection.
 - Videos, model weights, and generated outputs are git-ignored.
+- Stronger YOLO models can improve person detection on crowded or occluded
+  footage, but they take more CPU/GPU time and may reduce throughput.
+- Frigate, ONNX Runtime, and TensorRT are production detector backend options
+  behind the same event contract; they are not integrated in this repo.
 - The committed POS is **de-identified** (no customer names/phones, no employee
   data). The raw export must never be committed.
 - Floor-plan zone polygons are normalised approximations; calibrate against a
